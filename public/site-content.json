@@ -1,0 +1,57 @@
+{
+  "schoolInfo": {
+    "name": "Trường Tiểu Học Lê Lợi",
+    "shortName": "Tiểu Học Lê Lợi",
+    "address": "Thôn Ea Tút",
+    "village": "Ea Tút",
+    "commune": "Pơng Drang",
+    "province": "Đắk Lắk",
+    "fullAddress": "Thôn Ea Tút, Xã Pơng Drang, Tỉnh Đắk Lắk",
+    "phone": "0944823366",
+    "email": "truongthleloipongdrang@gmail.com",
+    "slogan": "Nâng bước tương lai - Ươm mầm tri thức giữa đại ngàn Tây Nguyên",
+    "establishedYear": "1998",
+    "stats": {
+      "studentsCount": 685,
+      "teachersCount": 38,
+      "classesCount": 22,
+      "branchesCount": 3,
+      "standardLevel": "Chuẩn Quốc Gia Mức Độ 1"
+    }
+  },
+  "principals": [
+    {
+      "id": "principal-1",
+      "name": "Thầy Nguyễn Thanh Bình",
+      "title": "Hiệu Trưởng",
+      "roleScope": "Bí thư Chi bộ - Quản lý điều hành toàn diện trường chính & các phân hiệu",
+      "campus": "Trường chính (Thôn Ea Tút)",
+      "phone": "0944823366",
+      "email": "nguyenthanhbinh.thleloi@gmail.com",
+      "bio": "Với hơn 25 năm tâm huyết cống hiến cho sự nghiệp trồng người tại vùng đất Đắk Lắk, Thầy Nguyễn Thanh Bình luôn tiên phong đổi mới phương pháp quản trị trường học, xây dựng môi trường giáo dục hạnh phúc, kỷ cương, tình thương và trách nhiệm.",
+      "avatar": "https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=600&q=80"
+    },
+    {
+      "id": "principal-2",
+      "name": "Cô Đỗ Thị Phục",
+      "title": "Phó Hiệu Trưởng",
+      "roleScope": "Phó Hiệu trưởng - Phụ trách chuyên môn & Quản lý Phân hiệu 1",
+      "campus": "Phân hiệu 1",
+      "phone": "0944823366",
+      "email": "dothiphuc.thleloi@gmail.com",
+      "bio": "Chiến sĩ thi đua cấp cơ sở nhiều năm liền, Cô Đỗ Thị Phục luôn sát sao trong công tác bồi dưỡng đội ngũ giáo viên, triển khai hiệu quả chương trình GDPT 2018 và nâng cao chất lượng dạy học tại Phân hiệu 1.",
+      "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=600&q=80"
+    },
+    {
+      "id": "principal-3",
+      "name": "Thầy Trần Mạnh Thắng",
+      "title": "Phó Hiệu Trưởng",
+      "roleScope": "Phó Hiệu trưởng - Phụ trách cơ sở vật chất, phong trào Đội & Quản lý Phân hiệu 2",
+      "campus": "Phân hiệu 2",
+      "phone": "0944823366",
+      "email": "tranmanhthang.thleloi@gmail.com",
+      "bio": "Năng động, nhiệt huyết và sâu sát với học sinh đồng bào dân tộc thiểu số, Thầy Trần Mạnh Thắng phụ trách quản lý Phân hiệu 2, đẩy mạnh các hoạt động trải nghiệm, kỹ năng sống và chuyển đổi số trong nhà trường.",
+      "avatar": "https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=600&q=80"
+    }
+  ]
+}

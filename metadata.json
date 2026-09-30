@@ -1,0 +1,7 @@
+{
+  "name": "Trường Tiểu Học Lê Lợi - Pơng Drang",
+  "description": "Cổng thông tin điện tử chính thức Trường Tiểu Học Lê Lợi, Xã Pơng Drang, Tỉnh Đắk Lắk. Nơi ươm mầm tri thức giữa đại ngàn Tây Nguyên.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
