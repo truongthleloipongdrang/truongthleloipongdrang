@@ -20,7 +20,7 @@ export const INITIAL_SITE_CONTENT: SiteContent = {
     leadershipText:
       '• Trường chính: Thầy Nguyễn Thanh Bình (Hiệu trưởng) & Cô Lại Thị Tho (Phó Hiệu trưởng)\n• Phân hiệu 1: Cô Đỗ Thị Phục (Phó Hiệu trưởng)\n• Phân hiệu 2: Thầy Trần Mạnh Thắng (Phó Hiệu trưởng)',
     stats: {
-      studentsCount: 900,
+      studentsCount: 999,
       teachersCount: 79,
       classesCount: 39,
       branchesCount: 3, // Trường chính + 2 Phân hiệu

@@ -4,7 +4,7 @@ import { SiteContent } from './types';
 const STORAGE_KEY = 'th_leloi_site_content_v1';
 const ADMIN_AUTH_KEY = 'th_leloi_admin_hash_v1';
 const GITHUB_REPO_INFO = {
-  owner: 'truongthyjutpongdrang',
+  owner: 'truongthleloipongdrang',
   repo: 'truongthleloipongdrang',
   branch: 'main',
   filePath: 'public/site-content.json',
@@ -126,7 +126,9 @@ export function resetSiteContentToDefault(): SiteContent {
 
 export async function fetchRemoteSiteContent(): Promise<SiteContent | null> {
   try {
-    const res = await fetch(`/site-content.json?v=${Date.now()}`);
+    const base = import.meta.env.BASE_URL || '/';
+    const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+    const res = await fetch(`${normalizedBase}site-content.json?v=${Date.now()}`);
     if (res.ok) {
       const data = await res.json();
       if (data && data.schoolInfo && data.schoolInfo.name) {

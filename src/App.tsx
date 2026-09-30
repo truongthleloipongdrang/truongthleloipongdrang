@@ -66,12 +66,23 @@ export default function App() {
   // Fetch remote content on mount to sync with latest GitHub public/site-content.json
   useEffect(() => {
     fetchRemoteSiteContent().then((remoteData) => {
-      if (remoteData && remoteData.schoolInfo) {
-        const local = localStorage.getItem('th_leloi_site_content_v1');
-        if (!local) {
-          setContent(remoteData);
-          saveSiteContentLocal(remoteData);
-        }
+      if (remoteData && remoteData.schoolInfo && remoteData.schoolInfo.stats) {
+        setContent((prev) => {
+          const next: SiteContent = {
+            ...prev,
+            ...remoteData,
+            schoolInfo: {
+              ...prev.schoolInfo,
+              ...remoteData.schoolInfo,
+              stats: {
+                ...prev.schoolInfo.stats,
+                ...remoteData.schoolInfo.stats,
+              },
+            },
+          };
+          saveSiteContentLocal(next);
+          return next;
+        });
       }
     });
   }, []);

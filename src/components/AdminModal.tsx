@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Lock,
@@ -91,6 +91,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   // Working copy of content
   const [draft, setDraft] = useState<SiteContent>(JSON.parse(JSON.stringify(content)));
+
+  // Always keep draft in sync when content updates or modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setDraft(JSON.parse(JSON.stringify(content)));
+    }
+  }, [isOpen, content]);
+
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
@@ -1681,7 +1689,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     <p className="text-xs text-slate-600">
                       Repo:{' '}
                       <code className="font-mono bg-white px-1.5 py-0.5 rounded border text-emerald-900">
-                        truongthyjutpongdrang/truongthleloipongdrang
+                        truongthleloipongdrang/truongthleloipongdrang
                       </code>{' '}
                       (Nhánh: <code>main</code>, File:{' '}
                       <code>public/site-content.json</code>)
