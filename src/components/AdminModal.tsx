@@ -21,6 +21,7 @@ import {
   Search,
   Link as LinkIcon,
   Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   SiteContent,
@@ -101,7 +102,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [pwMsg, setPwMsg] = useState('');
 
   // GitHub sync states
-  const [githubToken, setGithubToken] = useState('');
+  const GITHUB_TOKEN_STORAGE_KEY = 'th_leloi_github_pat_v1';
+  const [githubToken, setGithubToken] = useState(() => {
+    return localStorage.getItem(GITHUB_TOKEN_STORAGE_KEY) || '';
+  });
+  const [rememberToken, setRememberToken] = useState(true);
+  const [showToken, setShowToken] = useState(false);
   const [isSyncingGithub, setIsSyncingGithub] = useState(false);
 
   // AI loading per teacher
@@ -219,6 +225,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setIsSyncingGithub(true);
     setStatusMsg(null);
     try {
+      if (rememberToken && githubToken.trim()) {
+        localStorage.setItem(GITHUB_TOKEN_STORAGE_KEY, githubToken.trim());
+      } else if (!rememberToken) {
+        localStorage.removeItem(GITHUB_TOKEN_STORAGE_KEY);
+      }
       const result = await pushContentToGitHub(draft, githubToken);
       if (result.success) {
         onSaveContent(draft);
@@ -1681,16 +1692,70 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                        GitHub Fine-Grained Token (tùy chọn)
-                      </label>
-                      <input
-                        type="password"
-                        value={githubToken}
-                        onChange={(e) => setGithubToken(e.target.value)}
-                        placeholder="github_pat_..."
-                        className="w-full bg-white border border-slate-300 focus:border-emerald-600 rounded-lg p-2 text-xs font-mono"
-                      />
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-bold text-slate-700 uppercase">
+                          GitHub Fine-Grained Token
+                        </label>
+                        {githubToken && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGithubToken('');
+                              localStorage.removeItem(GITHUB_TOKEN_STORAGE_KEY);
+                              setStatusMsg({ type: 'success', text: 'Đã xóa Token khỏi bộ nhớ máy tính này.' });
+                              setTimeout(() => setStatusMsg(null), 3000);
+                            }}
+                            className="text-[11px] text-red-600 hover:text-red-700 underline font-medium"
+                          >
+                            Xóa Token đã lưu
+                          </button>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <input
+                          type={showToken ? 'text' : 'password'}
+                          value={githubToken}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setGithubToken(val);
+                            if (rememberToken && val.trim()) {
+                              localStorage.setItem(GITHUB_TOKEN_STORAGE_KEY, val.trim());
+                            } else if (!val.trim()) {
+                              localStorage.removeItem(GITHUB_TOKEN_STORAGE_KEY);
+                            }
+                          }}
+                          placeholder="github_pat_11..."
+                          className="w-full bg-white border border-slate-300 focus:border-emerald-600 rounded-lg p-2 pr-9 text-xs font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowToken(!showToken)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                          title={showToken ? 'Ẩn token' : 'Hiện token'}
+                        >
+                          {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+
+                      <div className="mt-2 flex items-center justify-between">
+                        <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={rememberToken}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setRememberToken(checked);
+                              if (checked && githubToken.trim()) {
+                                localStorage.setItem(GITHUB_TOKEN_STORAGE_KEY, githubToken.trim());
+                              } else {
+                                localStorage.removeItem(GITHUB_TOKEN_STORAGE_KEY);
+                              }
+                            }}
+                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <span>Ghi nhớ Token trên trình duyệt này (tiện lợi, không cần dán lại)</span>
+                        </label>
+                      </div>
                     </div>
 
                     <button
