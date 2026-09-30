@@ -124,6 +124,21 @@ export function resetSiteContentToDefault(): SiteContent {
   return INITIAL_SITE_CONTENT;
 }
 
+export async function fetchRemoteSiteContent(): Promise<SiteContent | null> {
+  try {
+    const res = await fetch(`/site-content.json?v=${Date.now()}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.schoolInfo && data.schoolInfo.name) {
+        return data as SiteContent;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not fetch remote site-content.json', err);
+  }
+  return null;
+}
+
 export function exportContentAsJson(content: SiteContent): void {
   const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(content, null, 2));
   const downloadAnchor = document.createElement('a');

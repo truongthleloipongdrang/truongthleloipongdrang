@@ -11,6 +11,7 @@ import {
   loadSiteContent,
   saveSiteContentLocal,
   resetSiteContentToDefault,
+  fetchRemoteSiteContent,
 } from './siteContentSync';
 import { updatePageSeo } from './seo';
 
@@ -61,6 +62,19 @@ export default function App() {
   useEffect(() => {
     updatePageSeo(currentSection);
   }, [currentSection]);
+
+  // Fetch remote content on mount to sync with latest GitHub public/site-content.json
+  useEffect(() => {
+    fetchRemoteSiteContent().then((remoteData) => {
+      if (remoteData && remoteData.schoolInfo) {
+        const local = localStorage.getItem('th_leloi_site_content_v1');
+        if (!local) {
+          setContent(remoteData);
+          saveSiteContentLocal(remoteData);
+        }
+      }
+    });
+  }, []);
 
   // Keyboard shortcut Ctrl+K or Cmd+K to toggle admin button visibility and modal
   useEffect(() => {

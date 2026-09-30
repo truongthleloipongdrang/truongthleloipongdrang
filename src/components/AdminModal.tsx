@@ -36,6 +36,7 @@ import {
   setStoredAdminHash,
   pushContentToGitHub,
   exportContentAsJson,
+  fetchRemoteSiteContent,
 } from '../siteContentSync';
 import { generateTeacherBioWithAI } from '../geminiConfig';
 import {
@@ -1590,7 +1591,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-2">
                       <h4 className="font-bold text-xs uppercase text-slate-800">
                         Xuất file dữ liệu (JSON)
@@ -1604,6 +1605,31 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       >
                         <Download className="w-3.5 h-3.5 mr-1 text-emerald-700" />
                         Tải file JSON về máy
+                      </button>
+                    </div>
+
+                    <div className="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-2">
+                      <h4 className="font-bold text-xs uppercase text-slate-800">
+                        Nạp lại từ GitHub
+                      </h4>
+                      <p className="text-xs text-slate-600">
+                        Đồng bộ lại toàn bộ dữ liệu từ file site-content.json trên GitHub về trang web.
+                      </p>
+                      <button
+                        onClick={async () => {
+                          const remote = await fetchRemoteSiteContent();
+                          if (remote && remote.schoolInfo) {
+                            setDraft(remote);
+                            onSaveContent(remote);
+                            setStatusMsg({ type: 'success', text: 'Đã nạp thành công dữ liệu mới nhất từ GitHub!' });
+                          } else {
+                            setStatusMsg({ type: 'error', text: 'Chưa thể tải dữ liệu từ GitHub hoặc file chưa cập nhật.' });
+                          }
+                        }}
+                        className="inline-flex items-center bg-white border border-emerald-300 hover:border-emerald-600 text-emerald-800 px-3 py-1.5 rounded-lg text-xs font-semibold"
+                      >
+                        <RefreshCcw className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                        Tải từ GitHub
                       </button>
                     </div>
 
