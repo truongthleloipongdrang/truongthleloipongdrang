@@ -3,6 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Safe fetch property wrapper for iframe/sandbox compatibility -->
+    <script>
+      (function() {
+        try {
+          if (typeof window !== 'undefined' && window.fetch) {
+            var _nativeFetch = window.fetch.bind(window);
+            var _currentFetch = function() {
+              return _nativeFetch.apply(window, arguments);
+            };
+            Object.defineProperty(window, 'fetch', {
+              get: function() {
+                return _currentFetch;
+              },
+              set: function(val) {
+                _currentFetch = typeof val === 'function' ? val : _nativeFetch;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch (_) {}
+      })();
+    </script>
     
     <!-- Primary Meta Tags -->
     <title>Trường Tiểu Học Lê Lợi - Pơng Drang, Đắk Lắk | Cổng Thông Tin Điện Tử</title>
