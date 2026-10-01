@@ -34,8 +34,12 @@ jobs:
         env:
           # Dòng này sẽ lấy API Key từ Bước 1 bạn đã cài để đưa vào web
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      - name: Add Google verification file
-        run: cp public/google0e237b742541a6c7.html dist/
+      - name: Copy SEO files
+        run: |
+          cp public/google0e237b742541a6c7.html dist/
+          cp public/sitemap.xml dist/
+          cp public/robots.txt dist/
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
