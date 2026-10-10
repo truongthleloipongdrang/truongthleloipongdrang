@@ -1,0 +1,16 @@
+{
+  "name": "Trường Tiểu Học Lê Lợi - Pơng Drang",
+  "short_name": "TH Lê Lợi",
+  "description": "Cổng thông tin điện tử Trường Tiểu Học Lê Lợi, Thôn Ea Tút, Xã Pơng Drang, Tỉnh Đắk Lắk",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#064e3b",
+  "theme_color": "#065f46",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

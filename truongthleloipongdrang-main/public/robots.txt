@@ -1,0 +1,5 @@
+# robots.txt for Truong Tieu Hoc Le Loi - Pong Drang, Dak Lak
+User-agent: *
+Allow: /
+
+Sitemap: https://truongthleloipongdrang.github.io/truongthleloipongdrang/sitemap.xml

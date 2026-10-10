@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="gradForest" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#047857" />
+      <stop offset="100%" stop-color="#064e3b" />
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+  </defs>
+  <!-- Circular Emblem -->
+  <circle cx="50" cy="50" r="48" fill="url(#gradForest)" stroke="url(#goldGrad)" stroke-width="3" />
+  <circle cx="50" cy="50" r="44" fill="none" stroke="#ffffff" stroke-opacity="0.3" stroke-width="1" stroke-dasharray="2,2" />
+  
+  <!-- Mountain Peaks (Tây Nguyên) -->
+  <polygon points="18,65 35,42 52,65" fill="#059669" opacity="0.6" />
+  <polygon points="38,65 58,36 78,65" fill="#10b981" opacity="0.4" />
+  <polygon points="48,65 65,46 82,65" fill="#047857" opacity="0.7" />
+
+  <!-- Rising Sun / Star of Knowledge -->
+  <polygon points="50,18 53,26 61,26 55,31 57,39 50,34 43,39 45,31 39,26 47,26" fill="url(#goldGrad)" />
+
+  <!-- Open Book of Knowledge -->
+  <path d="M 24,70 Q 37,64 50,70 Q 63,64 76,70 L 76,54 Q 63,48 50,54 Q 37,48 24,54 Z" fill="#ffffff" />
+  <path d="M 50,54 L 50,70" stroke="#065f46" stroke-width="1.5" />
+  
+  <!-- Quill / Torch Flame -->
+  <path d="M 48,46 C 48,42 50,38 50,38 C 50,38 52,42 52,46 C 52,48 51,50 50,50 C 49,50 48,48 48,46 Z" fill="#f59e0b" />
+</svg>
