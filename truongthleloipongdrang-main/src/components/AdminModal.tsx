@@ -1,3 +1,5 @@
+import { INITIAL_SITE_CONTENT } from '../data';
+import { onlineEnabled, loginOnline, logoutOnline, saveOnlineContent, loadPrivateStudents } from '../onlineStore';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -32,9 +34,6 @@ import {
   MemberUser,
 } from '../types';
 import {
-  sha256Hash,
-  getStoredAdminHash,
-  setStoredAdminHash,
   pushContentToGitHub,
   exportContentAsJson,
   fetchRemoteSiteContent,
@@ -72,7 +71,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   if (!isOpen) return null;
 
   // Login form states
-  const [username, setUsername] = useState('bgh_leloi');
+  const [username, setUsername] = useState(import.meta.env.VITE_FIREBASE_ADMIN_EMAIL || '');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showForgotNotice, setShowForgotNotice] = useState(false);
@@ -109,14 +108,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [confirmPw, setConfirmPw] = useState('');
   const [pwMsg, setPwMsg] = useState('');
 
+  // Disable any previously stored browser PAT. Tokens should never be stored in a static public app.
+  useEffect(() => { localStorage.removeItem('th_leloi_github_pat_v1'); }, []);
   // GitHub sync states
   const GITHUB_TOKEN_STORAGE_KEY = 'th_leloi_github_pat_v1';
   const [githubToken, setGithubToken] = useState(() => {
-    return localStorage.getItem(GITHUB_TOKEN_STORAGE_KEY) || '';
+    return '';
   });
-  const [rememberToken, setRememberToken] = useState(true);
+  const [rememberToken, setRememberToken] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [isSyncingGithub, setIsSyncingGithub] = useState(false);
+  const [savingOnline, setSavingOnline] = useState(false);
 
   // AI loading per teacher
   const [aiGeneratingId, setAiGeneratingId] = useState<string | null>(null);
@@ -169,87 +171,39 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setTimeout(() => setStatusMsg(null), 5000);
   };
 
-  // Handle Admin Login
+  // Firebase Authentication is enforced server-side by Firestore Security Rules.
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
-    if (!password) {
-      setLoginError('Vui lòng nhập mật khẩu quản trị.');
-      return;
-    }
-
-    const hashed = await sha256Hash(password);
-    const storedHash = getStoredAdminHash();
-
-    // Check with stored SHA-256 hash or fallback initial secure hash
-    if (hashed === storedHash || password === 'Leloi@PongDrang2026#') {
+    try {
+      await loginOnline(username, password);
       onLoginSuccess();
-      setDraft(JSON.parse(JSON.stringify(content)));
+      const privateStudents = await loadPrivateStudents();
+      setDraft({ ...content, students: privateStudents ?? INITIAL_SITE_CONTENT.students });
       setPassword('');
-    } else {
-      setLoginError('Mật khẩu không chính xác. Mật khẩu khởi tạo: Leloi@PongDrang2026#');
+    } catch (error: any) {
+      logoutOnline();
+      setLoginError(error.message || 'Đăng nhập Firebase thất bại.');
     }
   };
 
-  // Handle Password Change
-  const handleChangePassword = async (e: React.FormEvent) => {
+  const handleChangePassword = (e: React.FormEvent) => {
     e.preventDefault();
-    setPwMsg('');
-
-    if (newPw.length < 8) {
-      setPwMsg('Mật khẩu mới phải có ít nhất 8 ký tự.');
-      return;
-    }
-    if (newPw !== confirmPw) {
-      setPwMsg('Mật khẩu xác nhận không khớp.');
-      return;
-    }
-
-    const currentHashed = await sha256Hash(currentPw);
-    const storedHash = getStoredAdminHash();
-
-    if (currentHashed !== storedHash && currentPw !== 'Leloi@PongDrang2026#') {
-      setPwMsg('Mật khẩu hiện tại không đúng.');
-      return;
-    }
-
-    const newHashed = await sha256Hash(newPw);
-    setStoredAdminHash(newHashed);
-    setPwMsg('✅ Đổi mật khẩu thành công! Mật khẩu mới đã được băm an toàn SHA-256.');
-    setCurrentPw('');
-    setNewPw('');
-    setConfirmPw('');
+    setPwMsg('Vui lòng đổi mật khẩu tài khoản trong Firebase Console → Authentication → Users. Mật khẩu trình duyệt cũ không còn được sử dụng.');
   };
 
-  // Save changes locally
-  const handleSaveDraft = () => {
-    onSaveContent(draft);
-    setStatusMsg({ type: 'success', text: 'Đã lưu trên máy này. Để mọi người thấy nội dung mới, vào Sao lưu & GitHub và chọn Đẩy lên GitHub.' });
-    setTimeout(() => setStatusMsg(null), 4000);
-  };
-
-  // Direct push to GitHub
-  const handlePushGitHub = async () => {
-    setIsSyncingGithub(true);
+  // A green success message is shown ONLY after Firestore confirms writes.
+  const handleSaveDraft = async () => {
+    if (savingOnline) return;
+    setSavingOnline(true);
     setStatusMsg(null);
     try {
-      if (rememberToken && githubToken.trim()) {
-        localStorage.setItem(GITHUB_TOKEN_STORAGE_KEY, githubToken.trim());
-      } else if (!rememberToken) {
-        localStorage.removeItem(GITHUB_TOKEN_STORAGE_KEY);
-      }
-      const result = await pushContentToGitHub(draft, githubToken);
-      if (result.success) {
-        onSaveContent(draft);
-        setStatusMsg({ type: 'success', text: result.message });
-      } else {
-        setStatusMsg({ type: 'error', text: result.message });
-      }
-    } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err.message || 'Lỗi khi đồng bộ GitHub' });
-    } finally {
-      setIsSyncingGithub(false);
-    }
+      await saveOnlineContent(draft);
+      onSaveContent(draft, true);
+      setStatusMsg({ type: 'success', text: 'Đã lưu lên Firebase thành công. Mọi người sẽ nhìn thấy nội dung mới sau khi tải lại trang.' });
+    } catch (error: any) {
+      setStatusMsg({ type: 'error', text: `CHƯA lưu trực tuyến: ${error.message || 'Lỗi kết nối.'}. Nội dung vẫn còn trong cửa sổ chỉnh sửa.` });
+    } finally { setSavingOnline(false); }
   };
 
   // Quick AI bio generation for a teacher
@@ -379,7 +333,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 Thông báo bảo mật:
               </p>
               <p className="text-amber-800">
-                Mật khẩu quản trị được mã hóa bằng thuật toán SHA-256 an toàn. Bạn có thể đổi mật khẩu bất kỳ lúc nào sau khi đăng nhập.
+                Đăng nhập bằng email và mật khẩu Firebase Authentication. Firestore Rules kiểm tra quyền ghi trên máy chủ.
               </p>
             </div>
 
@@ -392,10 +346,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
-                  Tên đăng nhập
+                  Email quản trị Firebase
                 </label>
                 <input
-                  type="text"
+                  type="email"
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -435,9 +389,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700">
                   <p className="font-semibold">Hỗ trợ khôi phục:</p>
                   <p className="mt-1">
-                    Mật khẩu mặc định hệ thống cấp là:{' '}
+                    Mật khẩu được quản lý trong Firebase Authentication. 
                     <code className="bg-emerald-100 text-emerald-900 px-1 py-0.5 rounded font-mono font-bold">
-                      Leloi@PongDrang2026#
+                      Không có mật khẩu mặc định
                     </code>
                     . Nếu đổi mật khẩu mà quên, vui lòng liên hệ email trường:{' '}
                     <strong>truongthleloipongdrang@gmail.com</strong>.
@@ -1540,7 +1494,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       Đổi Mật Khẩu Quản Trị
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Mật khẩu được lưu trữ dưới dạng băm SHA-256 kèm salt, không lưu mật khẩu rõ ràng.
+                      Đổi hoặc đặt lại mật khẩu tại Firebase Authentication → Users.
                     </p>
                   </div>
 
@@ -1599,7 +1553,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               )}
 
               {/* TAB 8: SYNC & GITHUB */}
-              {activeTab === 'sync' && (
+              {activeTab === 'sync' && onlineEnabled && (<div className="p-5 text-sm text-emerald-900 bg-emerald-50 rounded-xl">Đã bật Firebase: nhấn “Lưu Tất Cả Thay Đổi” để xuất bản ngay. Không cần GitHub Token.</div>)}
+              {activeTab === 'sync' && !onlineEnabled && (
                 <div className="space-y-5">
                   <div className="border-b pb-2">
                     <h3 className="text-base font-bold text-slate-900">
@@ -1800,10 +1755,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               <button
                 type="button"
                 onClick={handleSaveDraft}
+                disabled={savingOnline || !onlineEnabled}
                 className="inline-flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white px-5 py-2 rounded-lg text-xs font-bold shadow-xs hover:shadow transition-all"
               >
                 <Save className="w-4 h-4" />
-                <span>Lưu Tất Cả Thay Đổi</span>
+                <span>{savingOnline ? 'Đang lưu lên Firebase...' : 'Lưu Tất Cả Thay Đổi'}</span>
               </button>
             </div>
           </div>
