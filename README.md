@@ -1,7 +1,7 @@
 # Cổng Thông Tin Điện Tử Trường Tiểu Học Lê Lợi - Pơng Drang, Đắk Lắk
 
 Website chính thức của **Trường Tiểu Học Lê Lợi**, Thôn Ea Tút, Xã Pơng Drang, Tỉnh Đắk Lắk.
-- **GitHub Owner:** `truongthyjutpongdrang`
+- **GitHub Owner:** `truongthleloipongdrang`
 - **GitHub Repository:** `truongthleloipongdrang`
 - **Đường dẫn GitHub Pages:** `https://truongthleloipongdrang.github.io/truongthleloipongdrang/`
 - **Điện thoại:** 0944823366
