@@ -1644,6 +1644,16 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg text-xs">
                       <Download className="w-4 h-4 inline mr-2" /> Tải bản sao lưu JSON
                     </button>
+                    <a
+                      href="https://github.com/truongthleloipongdrang/truongthleloi-firebase-backups/actions/workflows/backup-firebase.yml"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-800 hover:bg-slate-50"
+                      title="Mở GitHub Actions để chạy sao lưu thủ công bằng Run workflow"
+                    >
+                      <Github className="w-4 h-4 mr-2" /> Mở sao lưu GitHub
+                    </a>
+                    <p className="text-xs text-slate-500">Đăng nhập GitHub, chọn Run workflow → main → Run workflow. Không cần nhập GitHub Token trên website.</p>
                     <div className="border-t pt-3 space-y-2">
                       <label className="block text-sm font-semibold text-slate-800" htmlFor="restore-public-json">Khôi phục nội dung công khai từ bản sao lưu</label>
                       <p className="text-xs text-amber-800">Hãy tải bản sao lưu hiện tại trước. Khôi phục sẽ ghi đè nội dung công khai ngay trên website; không thay đổi dữ liệu học sinh.</p>
