@@ -1832,16 +1832,16 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       </div>
                     </div>
 
-                    <button
-                      onClick={handlePushGitHub}
-                      disabled={isSyncingGithub || !githubToken}
-                      className="inline-flex items-center bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg text-xs transition-colors"
+
+                    <a
+                      href="https://github.com/truongthleloipongdrang/truongthleloi-firebase-backups/actions"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-lg text-xs transition-colors"
                     >
-                      <Upload className="w-3.5 h-3.5 mr-1.5" />
-                      {isSyncingGithub
-                        ? 'Đang gửi dữ liệu lên GitHub...'
-                        : 'Đồng Bộ Lên GitHub (Tự Động Build)'}
-                    </button>
+                      <Github className="w-3.5 h-3.5 mr-1.5" />
+                      Mở sao lưu GitHub
+                    </a>
                   </div>
                 </div>
               )}
