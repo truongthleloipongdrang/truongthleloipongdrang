@@ -74,6 +74,7 @@ export default function App() {
     let active = true;
     (onlineEnabled ? loadOnlineContent() : fetchRemoteSiteContent()).then((remoteData) => {
       if (!active || !remoteData?.schoolInfo?.stats) return;
+      const remoteSchoolInfo = remoteData.schoolInfo;
       if (!onlineEnabled && !confirmRemotePublished(remoteData as SiteContent)) {
         // Local admin edits have not yet reached the deployed public JSON.
         return;
@@ -85,7 +86,7 @@ export default function App() {
         schoolInfo: {
           ...prev.schoolInfo,
           ...remoteData.schoolInfo,
-          stats: { ...prev.schoolInfo.stats, ...remoteData.schoolInfo.stats },
+          stats: { ...prev.schoolInfo.stats, ...remoteSchoolInfo.stats },
         },
       }));
     }).catch((error) => console.error('Không tải được dữ liệu trực tuyến:', error));
