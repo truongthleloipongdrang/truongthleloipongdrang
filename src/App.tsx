@@ -1,3 +1,4 @@
+import { onlineEnabled, loadOnlineContent, logoutOnline, saveOnlineContent } from './onlineStore';
 import React, { useState, useEffect } from 'react';
 import {
   NavSection,
@@ -12,6 +13,7 @@ import {
   saveSiteContentLocal,
   resetSiteContentToDefault,
   fetchRemoteSiteContent,
+  confirmRemotePublished,
 } from './siteContentSync';
 import { updatePageSeo } from './seo';
 
@@ -38,7 +40,10 @@ import { ShieldCheck, Save, Sparkles, CheckCircle2 } from 'lucide-react';
 
 export default function App() {
   const [currentSection, setCurrentSection] = useState<NavSection>('home');
-  const [content, setContent] = useState<SiteContent>(loadSiteContent());
+  const [content, setContent] = useState<SiteContent>(() => {
+    const initial = loadSiteContent();
+    return onlineEnabled ? { ...initial, students: [] } : initial;
+  });
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
 
   // Authentication states
@@ -63,28 +68,28 @@ export default function App() {
     updatePageSeo(currentSection);
   }, [currentSection]);
 
-  // Fetch remote content on mount to sync with latest GitHub public/site-content.json
+  // Public visitors always read the live Firestore document when configured.
+  // Local drafts can never override published data for anonymous users.
   useEffect(() => {
-    fetchRemoteSiteContent().then((remoteData) => {
-      if (remoteData && remoteData.schoolInfo && remoteData.schoolInfo.stats) {
-        setContent((prev) => {
-          const next: SiteContent = {
-            ...prev,
-            ...remoteData,
-            schoolInfo: {
-              ...prev.schoolInfo,
-              ...remoteData.schoolInfo,
-              stats: {
-                ...prev.schoolInfo.stats,
-                ...remoteData.schoolInfo.stats,
-              },
-            },
-          };
-          saveSiteContentLocal(next);
-          return next;
-        });
+    let active = true;
+    (onlineEnabled ? loadOnlineContent() : fetchRemoteSiteContent()).then((remoteData) => {
+      if (!active || !remoteData?.schoolInfo?.stats) return;
+      if (!onlineEnabled && !confirmRemotePublished(remoteData as SiteContent)) {
+        // Local admin edits have not yet reached the deployed public JSON.
+        return;
       }
-    });
+      setContent((prev) => ({
+        ...prev,
+        ...remoteData,
+        students: onlineEnabled ? [] : prev.students,
+        schoolInfo: {
+          ...prev.schoolInfo,
+          ...remoteData.schoolInfo,
+          stats: { ...prev.schoolInfo.stats, ...remoteData.schoolInfo.stats },
+        },
+      }));
+    }).catch((error) => console.error('Không tải được dữ liệu trực tuyến:', error));
+    return () => { active = false; };
   }, []);
 
   // Keyboard shortcut Ctrl+K or Cmd+K to toggle admin button visibility and modal
@@ -607,6 +612,7 @@ export default function App() {
 
     setContent(nextContent);
     saveSiteContentLocal(nextContent);
+    void saveOnlineContent(nextContent).then(() => setAdminNotice('Đã đăng cập nhật trực tuyến thành công.')).catch((e) => setAdminNotice(`Lỗi lưu trực tuyến: ${e.message}`));
     setAdminNotice(`Đã cập nhật thành công thẻ: "${updatedCard.title}"!`);
     setTimeout(() => setAdminNotice(null), 3500);
   };
@@ -825,11 +831,11 @@ export default function App() {
         onClose={() => setIsAdminModalOpen(false)}
         isAdmin={isAdmin}
         onLoginSuccess={() => setIsAdmin(true)}
-        onLogout={() => setIsAdmin(false)}
+        onLogout={() => { logoutOnline(); setIsAdmin(false); }}
         content={content}
-        onSaveContent={(newContent) => {
+        onSaveContent={(newContent, published = false) => {
+          if (!onlineEnabled) saveSiteContentLocal(newContent, !published);
           setContent(newContent);
-          saveSiteContentLocal(newContent);
         }}
         onResetContent={() => {
           const def = resetSiteContentToDefault();
