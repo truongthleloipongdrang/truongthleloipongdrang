@@ -1,5 +1,5 @@
 import { INITIAL_SITE_CONTENT } from '../data';
-import { onlineEnabled, loginOnline, logoutOnline, saveOnlineContent, loadPrivateStudents } from '../onlineStore';
+import { onlineEnabled, loginOnline, logoutOnline, saveOnlineContent, savePrivateStudents, loadPrivateStudents } from '../onlineStore';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -119,6 +119,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [showToken, setShowToken] = useState(false);
   const [isSyncingGithub, setIsSyncingGithub] = useState(false);
   const [savingOnline, setSavingOnline] = useState(false);
+  const [studentBaseline, setStudentBaseline] = useState<SiteContent['students'] | null>(null);
 
   // AI loading per teacher
   const [aiGeneratingId, setAiGeneratingId] = useState<string | null>(null);
@@ -177,9 +178,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setLoginError('');
     try {
       await loginOnline(username, password);
-      onLoginSuccess();
       const privateStudents = await loadPrivateStudents();
-      setDraft({ ...content, students: privateStudents ?? INITIAL_SITE_CONTENT.students });
+      // Missing private document means not initialized; never seed demo students.
+      const students = privateStudents ?? [];
+      setStudentBaseline(structuredClone(students));
+      setDraft({ ...content, students });
+      onLoginSuccess();
       setPassword('');
     } catch (error: any) {
       logoutOnline();
@@ -198,6 +202,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setSavingOnline(true);
     setStatusMsg(null);
     try {
+      const changedStudents = studentBaseline !== null && JSON.stringify(draft.students) !== JSON.stringify(studentBaseline);
+      if (changedStudents) {
+        if (draft.students.length === 0) throw new Error('Không được lưu danh sách học sinh rỗng. Hãy nhập danh sách hợp lệ trước.');
+        if (!window.confirm(`Bạn sắp cập nhật riêng ${draft.students.length} hồ sơ học sinh lên khu vực BẢO MẬT Firebase. Tiếp tục?`)) return;
+        await savePrivateStudents(draft.students);
+        setStudentBaseline(structuredClone(draft.students));
+      }
       await saveOnlineContent(draft);
       onSaveContent(draft, true);
       setStatusMsg({ type: 'success', text: 'Đã lưu lên Firebase thành công. Mọi người sẽ nhìn thấy nội dung mới sau khi tải lại trang.' });
@@ -496,7 +507,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
               <div className="mt-auto pt-3 border-t border-slate-200 hidden md:block">
                 <button
-                  onClick={onLogout}
+                  onClick={() => { setStudentBaseline(null); onLogout(); }}
                   className="w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors"
                 >
                   🚪 Đăng Xuất Quản Trị
