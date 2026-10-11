@@ -2,6 +2,8 @@ import { INITIAL_SITE_CONTENT } from './data';
 import { SiteContent } from './types';
 
 const STORAGE_KEY = 'th_leloi_site_content_v1';
+const LOCAL_PENDING_KEY = 'th_leloi_site_content_pending_sync_v1';
+const LOCAL_MIGRATED_KEY = 'th_leloi_site_content_migrated_v1';
 const ADMIN_AUTH_KEY = 'th_leloi_admin_hash_v1';
 const GITHUB_REPO_INFO = {
   owner: 'truongthleloipongdrang',
@@ -37,6 +39,11 @@ export function loadSiteContent(): SiteContent {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
+      // Protect drafts saved by the previous version before this fix.
+      if (!localStorage.getItem(LOCAL_MIGRATED_KEY)) {
+        localStorage.setItem(LOCAL_PENDING_KEY, 'true');
+        localStorage.setItem(LOCAL_MIGRATED_KEY, 'true');
+      }
       const parsed = JSON.parse(raw);
 
       // Merge principals ensuring newly added leaders like Cô Lại Thị Tho are preserved
@@ -115,12 +122,36 @@ export function loadSiteContent(): SiteContent {
   return INITIAL_SITE_CONTENT;
 }
 
-export function saveSiteContentLocal(content: SiteContent): void {
+export function saveSiteContentLocal(content: SiteContent, pendingSync = true): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(content, null, 2));
+  localStorage.setItem(LOCAL_MIGRATED_KEY, 'true');
+  if (pendingSync) localStorage.setItem(LOCAL_PENDING_KEY, 'true');
+  else localStorage.removeItem(LOCAL_PENDING_KEY);
+}
+
+export function hasPendingLocalChanges(): boolean {
+  return localStorage.getItem(LOCAL_PENDING_KEY) === 'true';
+}
+
+// Keep the draft until the deployed GitHub JSON actually contains it.
+export function confirmRemotePublished(remote: SiteContent): boolean {
+  if (!hasPendingLocalChanges()) return true;
+  try {
+    const local = localStorage.getItem(STORAGE_KEY);
+    if (local && JSON.stringify(JSON.parse(local)) === JSON.stringify(remote)) {
+      localStorage.removeItem(LOCAL_PENDING_KEY);
+      return true;
+    }
+  } catch (error) {
+    console.warn('Could not compare local changes with published content', error);
+  }
+  return false;
 }
 
 export function resetSiteContentToDefault(): SiteContent {
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(LOCAL_PENDING_KEY);
+  localStorage.setItem(LOCAL_MIGRATED_KEY, 'true');
   return INITIAL_SITE_CONTENT;
 }
 
