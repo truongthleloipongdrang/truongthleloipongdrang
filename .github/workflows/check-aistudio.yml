@@ -1,0 +1,29 @@
+
+name: Kiem tra ket noi AI Studio
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Lay ma nguon AI Studio
+        uses: actions/checkout@v4
+        with:
+          repository: truongthleloipongdrang/truongthleloi-aistudio
+          ref: main
+          token: ${{ secrets.AISTUDIO_READ_TOKEN }}
+          persist-credentials: false
+          path: ai-studio
+
+      - name: Kiem tra ket noi
+        run: |
+          test -f ai-studio/package.json
+          test -d ai-studio/src
+          echo "Ket noi kho AI Studio thanh cong"
+          git -C ai-studio rev-parse --short HEAD
