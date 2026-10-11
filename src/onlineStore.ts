@@ -52,11 +52,18 @@ async function writeDocument(name: string, payload: object) {
     body: JSON.stringify({ fields: { payload: { stringValue: JSON.stringify(payload) } } }),
   }));
 }
+// Ordinary publishing never modifies private student records.
 export async function saveOnlineContent(content: SiteContent): Promise<void> {
   if (!onlineEnabled || !session) throw new Error('Chưa đăng nhập Firebase; dữ liệu chưa được đăng trực tuyến.');
-  // Children's evaluations must NEVER be readable anonymously.
-  const { students, ...publicContent } = content;
-  // Save private data first. A failed public write must be reported to the admin.
-  await writeDocument('privateStudents', { students });
+  const { students: _privateStudents, ...publicContent } = content;
   await writeDocument('publicContent', publicContent);
+}
+
+// Private student changes are a separate, explicitly confirmed action.
+export async function savePrivateStudents(students: SiteContent['students']): Promise<void> {
+  if (!session) throw new Error('Cần đăng nhập Firebase trước khi lưu danh sách học sinh.');
+  if (!Array.isArray(students) || students.length === 0) {
+    throw new Error('Không cho phép thay thế danh sách học sinh bằng danh sách rỗng.');
+  }
+  await writeDocument('privateStudents', { students });
 }

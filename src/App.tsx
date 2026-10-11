@@ -611,9 +611,15 @@ export default function App() {
     }
 
     setContent(nextContent);
-    saveSiteContentLocal(nextContent);
-    void saveOnlineContent(nextContent).then(() => setAdminNotice('Đã đăng cập nhật trực tuyến thành công.')).catch((e) => setAdminNotice(`Lỗi lưu trực tuyến: ${e.message}`));
-    setAdminNotice(`Đã cập nhật thành công thẻ: "${updatedCard.title}"!`);
+    if (!onlineEnabled) saveSiteContentLocal(nextContent);
+    if (onlineEnabled) {
+      setAdminNotice('Đang lưu nội dung lên Firebase...');
+      void saveOnlineContent(nextContent)
+        .then(() => setAdminNotice('Đã lưu nội dung công khai lên Firebase.'))
+        .catch((e) => setAdminNotice(`CHƯA lưu lên Firebase: ${e.message}`));
+    } else {
+      setAdminNotice(`Đã cập nhật thẻ: "${updatedCard.title}" trên trình duyệt.`);
+    }
     setTimeout(() => setAdminNotice(null), 3500);
   };
 
@@ -773,7 +779,7 @@ export default function App() {
               const next = { ...content, students: newStudents };
               setContent(next);
               saveSiteContentLocal(next);
-              setAdminNotice('Đã cập nhật danh sách học sinh thành công!');
+              setAdminNotice('Danh sách mới chỉ được sửa trên màn hình. Hãy vào quản trị và lưu riêng dữ liệu học sinh để cập nhật Firebase.');
               setTimeout(() => setAdminNotice(null), 3500);
             }}
           />

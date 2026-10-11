@@ -22,7 +22,7 @@ export async function sha256Hash(text: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Initial default admin password hash (for password: "Leloi@PongDrang2026#")
+// Legacy browser hash, not used by Firebase Authentication.
 // Never uses admin/admin or weak passwords!
 export const DEFAULT_ADMIN_HASH = '1f6c449c25bb2a4ad313b632049d52033bc6f44d18ec8343f110757277a06f3b';
 
