@@ -1,0 +1,106 @@
+
+name: Dong bo AI Studio ve website
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-aistudio
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout website chinh
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Checkout AI Studio Private
+        uses: actions/checkout@v4
+        with:
+          repository: truongthleloipongdrang/truongthleloi-aistudio
+          ref: main
+          token: ${{ secrets.AISTUDIO_READ_TOKEN }}
+          persist-credentials: false
+          path: aistudio-source
+
+      - name: Kiem tra ma nguon
+        run: |
+          test -d aistudio-source/src
+          test -f aistudio-source/package.json
+          test -d src
+          echo "Da ket noi hai kho GitHub"
+
+      - name: Dong bo ma nguon duoc phep
+        run: |
+          rsync -a \
+            --exclude='App.tsx' \
+            --exclude='data.ts' \
+            --exclude='onlineStore.ts' \
+            --exclude='siteContentSync.ts' \
+            --exclude='geminiConfig.ts' \
+            --exclude='studentExcelHelper.ts' \
+            --exclude='components/AdminModal.tsx' \
+            --exclude='components/MemberLoginModal.tsx' \
+            --exclude='components/StudentLookupSection.tsx' \
+            --exclude='.env*' \
+            aistudio-source/src/ src/
+
+          echo "Danh sach thay doi:"
+          git status --short -- src/
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install --no-package-lock
+
+      - name: Kiem tra TypeScript
+        run: npx tsc --noEmit
+
+      - name: Build website
+        run: npm run build
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_ADMIN_EMAIL: ${{ vars.VITE_FIREBASE_ADMIN_EMAIL }}
+
+      - name: Tao Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ github.token }}
+          branch: auto/aistudio-sync
+          base: main
+          add-paths: src
+          delete-branch: true
+          commit-message: "Sync safe AI Studio source changes"
+          title: "Cap nhat website tu Google AI Studio"
+          body: |
+            Dong bo ma nguon tu kho AI Studio Private.
+
+            Da kiem tra TypeScript va Build truoc khi tao PR.
+
+            Khong tu dong thay the:
+            - Cau hinh trien khai GitHub
+            - Firebase va dang nhap quan tri
+            - File du lieu hoc sinh
+            - File cau hinh nhay cam
+
+            Can xem Files changed va kiem tra
+            giao dien truoc khi Merge.
+
+            PR nay khong tu dong Merge.
