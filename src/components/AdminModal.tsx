@@ -1,5 +1,5 @@
 import { INITIAL_SITE_CONTENT } from '../data';
-import { onlineEnabled, loginOnline, logoutOnline, saveOnlineContent, savePrivateStudents, loadPrivateStudents } from '../onlineStore';
+import { onlineEnabled, loginOnline, logoutOnline, saveOnlineContent, savePrivateStudents, loadPrivateStudents, loadOnlineContent } from '../onlineStore';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -119,6 +119,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [showToken, setShowToken] = useState(false);
   const [isSyncingGithub, setIsSyncingGithub] = useState(false);
   const [savingOnline, setSavingOnline] = useState(false);
+  const [restoringBackup, setRestoringBackup] = useState(false);
+  const [backupNotice, setBackupNotice] = useState('');
   const [studentBaseline, setStudentBaseline] = useState<SiteContent['students'] | null>(null);
 
   // AI loading per teacher
@@ -215,6 +217,74 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     } catch (error: any) {
       setStatusMsg({ type: 'error', text: `CHƯA lưu trực tuyến: ${error.message || 'Lỗi kết nối.'}. Nội dung vẫn còn trong cửa sổ chỉnh sửa.` });
     } finally { setSavingOnline(false); }
+  };
+
+  // Public-only JSON backup. Never export private student records or authentication tokens.
+  const downloadPublicBackup = async () => {
+    setBackupNotice('');
+    try {
+      const remote = await loadOnlineContent();
+      if (!remote || !remote.schoolInfo || !Array.isArray(remote.teachers)) {
+        throw new Error('Chưa đọc được nội dung công khai từ Firebase.');
+      }
+      const { students: _excluded, ...safe } = remote;
+      const fileContent = JSON.stringify({
+        format: 'th-le-loi-public-backup', version: 1,
+        projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+        exportedAt: new Date().toISOString(),
+        content: safe,
+      }, null, 2);
+      const blob = new Blob([fileContent], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `th-le-loi-noi-dung-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setBackupNotice('Đã tạo bản sao lưu nội dung công khai đang lưu trên Firebase. Hãy cất file ở nơi an toàn.');
+    } catch (err: any) {
+      setBackupNotice(`Không sao lưu được: ${err.message || 'Lỗi kết nối Firebase.'}`);
+    }
+  };
+
+  const restorePublicBackup = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || restoringBackup || savingOnline) return;
+    setBackupNotice('');
+    try {
+      if (file.size > 950000) throw new Error('File sao lưu quá lớn (giới hạn 950 KB).');
+      const data = JSON.parse(await file.text());
+      if (data?.format !== 'th-le-loi-public-backup' || data?.version !== 1 || !data.content ||
+          data.projectId !== import.meta.env.VITE_FIREBASE_PROJECT_ID) {
+        throw new Error('Không đúng định dạng sao lưu hoặc không thuộc dự án Firebase của trường.');
+      }
+      const restored = data.content as Partial<SiteContent>;
+      if (!restored.schoolInfo || typeof restored.schoolInfo.name !== 'string' ||
+          !Array.isArray(restored.teachers) || !Array.isArray(restored.news) ||
+          !Array.isArray(restored.documents)) {
+        throw new Error('File thiếu các phần nội dung bắt buộc.');
+      }
+      if (Object.prototype.hasOwnProperty.call(restored, 'students')) {
+        throw new Error('File chứa dữ liệu học sinh. Chỉ được khôi phục bản sao lưu nội dung công khai.');
+      }
+      const remote = await loadOnlineContent();
+      if (!remote) throw new Error('Không tải được bản nội dung hiện tại từ Firebase.');
+      if (!window.confirm(`KHÔI PHỤC NỘI DUNG CÔNG KHAI\n\nFile: ${file.name}\nNgày sao lưu: ${data.exportedAt || 'không rõ'}\n\nThao tác sẽ thay thế nội dung công khai trên Firebase cho TẤT CẢ NGƯỜI XEM. Hồ sơ học sinh riêng tư sẽ không bị thay đổi.\n\nBạn đã tải bản sao lưu hiện tại trước khi tiếp tục chưa?`)) return;
+      setRestoringBackup(true);
+      // Preserve private students currently loaded in the admin session; never write them.
+      const updated = { ...draft, ...restored, students: draft.students } as SiteContent;
+      await saveOnlineContent(updated);
+      setDraft(updated);
+      onSaveContent(updated, true);
+      setBackupNotice('Đã khôi phục nội dung công khai lên Firebase. Hãy tải lại trang và kiểm tra.');
+    } catch (err: any) {
+      setBackupNotice(`Khôi phục thất bại: ${err.message || 'File không hợp lệ.'}`);
+    } finally {
+      setRestoringBackup(false);
+    }
   };
 
   // Quick AI bio generation for a teacher
@@ -1564,7 +1634,27 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               )}
 
               {/* TAB 8: SYNC & GITHUB */}
-              {activeTab === 'sync' && onlineEnabled && (<div className="p-5 text-sm text-emerald-900 bg-emerald-50 rounded-xl">Đã bật Firebase: nhấn “Lưu Tất Cả Thay Đổi” để xuất bản ngay. Không cần GitHub Token.</div>)}
+              {activeTab === 'sync' && onlineEnabled && (
+                <div className="space-y-4">
+                  <div className="p-5 text-sm text-emerald-900 bg-emerald-50 rounded-xl">Đã bật Firebase: nhấn “Lưu Tất Cả Thay Đổi” để xuất bản ngay. Không cần GitHub Token.</div>
+                  <div className="p-5 bg-white border border-slate-200 rounded-xl space-y-3">
+                    <h3 className="text-base font-bold text-slate-900">Sao lưu và khôi phục nội dung công khai</h3>
+                    <p className="text-sm text-slate-600">Tải dữ liệu hiện đang có trên Firebase thành file JSON, không bao gồm hồ sơ học sinh riêng tư. Không dùng dịch vụ trả phí.</p>
+                    <button type="button" disabled={restoringBackup || savingOnline} onClick={downloadPublicBackup}
+                      className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg text-xs">
+                      <Download className="w-4 h-4 inline mr-2" /> Tải bản sao lưu JSON
+                    </button>
+                    <div className="border-t pt-3 space-y-2">
+                      <label className="block text-sm font-semibold text-slate-800" htmlFor="restore-public-json">Khôi phục nội dung công khai từ bản sao lưu</label>
+                      <p className="text-xs text-amber-800">Hãy tải bản sao lưu hiện tại trước. Khôi phục sẽ ghi đè nội dung công khai ngay trên website; không thay đổi dữ liệu học sinh.</p>
+                      <input id="restore-public-json" type="file" accept=".json,application/json"
+                        disabled={restoringBackup || savingOnline} onChange={restorePublicBackup}
+                        className="text-sm block w-full" />
+                    </div>
+                    {backupNotice && <p role="status" className="text-sm p-3 bg-slate-100 rounded-lg">{backupNotice}</p>}
+                  </div>
+                </div>
+              )}
               {activeTab === 'sync' && !onlineEnabled && (
                 <div className="space-y-5">
                   <div className="border-b pb-2">
