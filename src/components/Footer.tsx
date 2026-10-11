@@ -187,6 +187,10 @@ export const Footer: React.FC<FooterProps> = ({
             )}
           </div>
         </div>
+
+        <div className="mt-3 text-center text-[11px] text-slate-600">
+          <p>Website được phát triển và cập nhật với sự hỗ trợ của công nghệ số.</p>
+        </div>
       </div>
     </footer>
   );
