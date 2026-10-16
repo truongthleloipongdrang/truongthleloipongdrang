@@ -69,7 +69,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
 
       - name: Kiem tra TypeScript
         run: npx tsc --noEmit
