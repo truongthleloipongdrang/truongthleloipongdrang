@@ -18,6 +18,8 @@ interface ContactSectionProps {
   onEditCard: (payload: EditableCardPayload) => void;
 }
 
+import { addFeedbackSubmission } from '../feedbackStorage';
+
 export const ContactSection: React.FC<ContactSectionProps> = ({
   schoolInfo,
   isAdmin,
@@ -31,6 +33,15 @@ export const ContactSection: React.FC<ContactSectionProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!name.trim() || !phone.trim() || !message.trim()) return;
+
+    addFeedbackSubmission({
+      fullName: name.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      message: message.trim(),
+    });
+
     setFormSent(true);
   };
 
@@ -388,14 +399,21 @@ export const ContactSection: React.FC<ContactSectionProps> = ({
             <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6 text-center space-y-2">
               <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
               <h4 className="font-bold text-emerald-950 text-base">
-                Cảm ơn quý vị đã gửi ý kiến!
+                Cảm ơn quý vị đã gửi ý kiến đóng góp!
               </h4>
               <p className="text-xs text-emerald-800">
-                Ý kiến đã được chuyển tới hộp thư điện tử nhà trường ({schoolInfo.email}).
+                Thông báo đã được chuyển trực tiếp đến Ban Giám hiệu nhà trường ({schoolInfo.email}). Thầy cô sẽ tiếp thu và phản hồi kịp thời.
               </p>
               <button
-                onClick={() => setFormSent(false)}
-                className="text-xs font-bold text-emerald-700 underline mt-2"
+                type="button"
+                onClick={() => {
+                  setFormSent(false);
+                  setName('');
+                  setPhone('');
+                  setEmail('');
+                  setMessage('');
+                }}
+                className="text-xs font-bold text-emerald-700 underline mt-2 cursor-pointer"
               >
                 Gửi thêm ý kiến khác
               </button>
