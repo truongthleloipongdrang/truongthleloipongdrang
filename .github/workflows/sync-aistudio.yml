@@ -68,6 +68,49 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
+      - name: Kiem tra thu vien giua hai kho
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const source = JSON.parse(fs.readFileSync('aistudio-source/package.json', 'utf8'));
+          const target = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          let mismatched = false;
+
+          for (const group of ['dependencies', 'devDependencies']) {
+            const a = source[group] || {};
+            const b = target[group] || {};
+            const names = new Set([...Object.keys(a), ...Object.keys(b)]);
+            for (const name of names) {
+              if (a[name] !== b[name]) {
+                mismatched = true;
+                console.log(group + ': ' + name + ': source=' + (a[name] || 'missing') + ', target=' + (b[name] || 'missing'));
+              }
+            }
+          }
+
+          if (mismatched) {
+            console.error('Thu vien hai kho khac nhau. Can kiem tra truoc khi dong bo.');
+            process.exit(1);
+          }
+
+          console.log('Danh sach thu vien khop nhau.');
+          NODE
+
+      - name: Kiem tra file can xu ly rieng
+        run: |
+          for file in App.tsx siteContentSync.ts components/AdminModal.tsx components/MemberLoginModal.tsx
+          do
+            if ! diff -q "aistudio-source/src/$file" "src/$file" > /dev/null 2>&1; then
+              echo "::warning::Can kiem tra thu cong: src/$file"
+            fi
+          done
+
+          if [ -f aistudio-source/firestore.rules ]; then
+            if ! cmp -s aistudio-source/firestore.rules firestore.rules; then
+              echo "::warning::firestore.rules khac nhau. Can kiem tra va phe duyet rieng."
+            fi
+          fi
+  
       - name: Install dependencies
         run: bun install
 
