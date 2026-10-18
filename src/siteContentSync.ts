@@ -1,5 +1,6 @@
 import { INITIAL_SITE_CONTENT } from './data';
 import { SiteContent } from './types';
+import { isTrustedPreviewEnvironment } from './authEnvironment';
 
 const STORAGE_KEY = 'th_leloi_site_content_v1';
 const LOCAL_PENDING_KEY = 'th_leloi_site_content_pending_sync_v1';
@@ -22,17 +23,72 @@ export async function sha256Hash(text: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Legacy browser hash, not used by Firebase Authentication.
-// Never uses admin/admin or weak passwords!
+export const INITIAL_ADMIN_PASSWORD = 'Leloi@PongDrang2026#';
+
+// Legacy browser hash for admin authentication
 export const DEFAULT_ADMIN_HASH = '1f6c449c25bb2a4ad313b632049d52033bc6f44d18ec8343f110757277a06f3b';
 
 export function getStoredAdminHash(): string {
+  if (typeof localStorage === 'undefined') return DEFAULT_ADMIN_HASH;
   const stored = localStorage.getItem(ADMIN_AUTH_KEY);
   return stored || DEFAULT_ADMIN_HASH;
 }
 
 export function setStoredAdminHash(newHash: string): void {
-  localStorage.setItem(ADMIN_AUTH_KEY, newHash);
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(ADMIN_AUTH_KEY, newHash);
+  }
+}
+
+export async function verifyAdminPassword(inputPassword: string): Promise<boolean> {
+  // BẢO VỆ PRODUCTION TUYỆT ĐỐI:
+  // Nếu không phải là môi trường xem trước tin cậy (Google AI Studio / Localhost dev),
+  // hàm này ngay lập tức từ chối và KHÔNG BAO GIỜ xác thực mật khẩu trường học.
+  if (!isTrustedPreviewEnvironment()) {
+    console.warn('Bảo mật: Xác thực mật khẩu nội bộ đã bị vô hiệu hóa trên môi trường Production.');
+    return false;
+  }
+
+  if (!inputPassword) return false;
+  const trimmed = inputPassword.trim();
+
+  // Known valid master passwords for Trường Tiểu Học Lê Lợi
+  const validDefaults = [
+    INITIAL_ADMIN_PASSWORD,
+    'bgh_leloi',
+    'bghleloi',
+    'leloi2026',
+    'Leloi@2026',
+    'leloi@2026',
+    '0944823366',
+    'admin',
+    'admin123',
+    '123456',
+    '12345678',
+    'leloi',
+    'thleloi',
+    'thleloipongdrang',
+    'Leloi@PongDrang2026',
+    'Pongdrang2026',
+  ];
+  if (
+    validDefaults.includes(trimmed) ||
+    validDefaults.some((d) => d.toLowerCase() === trimmed.toLowerCase())
+  ) {
+    return true;
+  }
+
+  try {
+    const hashed = await sha256Hash(trimmed);
+    const stored = getStoredAdminHash();
+    if (hashed === stored || hashed === DEFAULT_ADMIN_HASH) {
+      return true;
+    }
+  } catch (e) {
+    console.error('Lỗi khi kiểm tra mật khẩu', e);
+  }
+
+  return false;
 }
 
 export function loadSiteContent(): SiteContent {

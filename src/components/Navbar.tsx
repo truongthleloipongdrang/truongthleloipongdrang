@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   School,
   Menu,
@@ -17,8 +17,30 @@ import {
   Newspaper,
   GraduationCap,
   Image,
+  Bell,
+  Download,
+  CheckCircle2,
+  Clock,
+  ChevronRight,
+  Trash2,
+  MessageSquareText,
+  Lock,
 } from 'lucide-react';
-import { NavSection, SchoolInfo, MemberUser } from '../types';
+import { NavSection, SchoolInfo, MemberUser, AdmissionRegistration, FeedbackSubmission } from '../types';
+import {
+  getStoredRegistrations,
+  exportRegistrationsToExcel,
+  clearAllRegistrations,
+  ADMISSIONS_UPDATE_EVENT,
+  NEW_ADMISSION_NOTIFICATION_EVENT,
+} from '../admissionsStorage';
+import {
+  getStoredFeedback,
+  exportFeedbackToExcel,
+  clearAllFeedback,
+  FEEDBACK_UPDATE_EVENT,
+  NEW_FEEDBACK_NOTIFICATION_EVENT,
+} from '../feedbackStorage';
 
 interface NavbarProps {
   currentSection: NavSection;
@@ -27,10 +49,13 @@ interface NavbarProps {
   isAdmin: boolean;
   showAdminButton?: boolean;
   onOpenAdmin: () => void;
+  onOpenAdminAdmissions?: () => void;
+  onOpenAdminFeedback?: () => void;
   onAdminLogout: () => void;
   currentMember: MemberUser | null;
   onOpenMemberLogin: () => void;
   onMemberLogout: () => void;
+  onOpenAdmissionsSummary?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -40,13 +65,89 @@ export const Navbar: React.FC<NavbarProps> = ({
   isAdmin,
   showAdminButton = false,
   onOpenAdmin,
+  onOpenAdminAdmissions,
+  onOpenAdminFeedback,
   onAdminLogout,
   currentMember,
   onOpenMemberLogin,
   onMemberLogout,
+  onOpenAdmissionsSummary,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showNotificationMenu, setShowNotificationMenu] = useState(false);
+  const notificationMenuRef = useRef<HTMLDivElement>(null);
+
+  const [registrations, setRegistrations] = useState<AdmissionRegistration[]>(() =>
+    getStoredRegistrations()
+  );
+  const [confirmClearAllNav, setConfirmClearAllNav] = useState(false);
+
+  const [feedbackList, setFeedbackList] = useState<FeedbackSubmission[]>(() =>
+    getStoredFeedback()
+  );
+  const [showFeedbackMenu, setShowFeedbackMenu] = useState(false);
+  const feedbackMenuRef = useRef<HTMLDivElement>(null);
+  const [confirmClearFeedbackNav, setConfirmClearFeedbackNav] = useState(false);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setRegistrations(getStoredRegistrations());
+    };
+    window.addEventListener(ADMISSIONS_UPDATE_EVENT, handleUpdate);
+    window.addEventListener(NEW_ADMISSION_NOTIFICATION_EVENT, handleUpdate);
+    return () => {
+      window.removeEventListener(ADMISSIONS_UPDATE_EVENT, handleUpdate);
+      window.removeEventListener(NEW_ADMISSION_NOTIFICATION_EVENT, handleUpdate);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleFbUpdate = () => {
+      setFeedbackList(getStoredFeedback());
+    };
+    window.addEventListener(FEEDBACK_UPDATE_EVENT, handleFbUpdate);
+    window.addEventListener(NEW_FEEDBACK_NOTIFICATION_EVENT, handleFbUpdate);
+    return () => {
+      window.removeEventListener(FEEDBACK_UPDATE_EVENT, handleFbUpdate);
+      window.removeEventListener(NEW_FEEDBACK_NOTIFICATION_EVENT, handleFbUpdate);
+    };
+  }, []);
+
+  // Close notification menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        notificationMenuRef.current &&
+        !notificationMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowNotificationMenu(false);
+      }
+    };
+    if (showNotificationMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showNotificationMenu]);
+
+  // Close feedback menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        feedbackMenuRef.current &&
+        !feedbackMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowFeedbackMenu(false);
+      }
+    };
+    if (showFeedbackMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showFeedbackMenu]);
+
+  const pendingCount = registrations.filter((r) => r.status === 'pending').length;
+  const pendingFeedbackCount = feedbackList.filter((f) => f.status === 'pending').length;
 
   const navItems: { id: NavSection; label: string; icon: React.FC<{ className?: string }> }[] = [
     { id: 'home', label: 'Trang Chủ', icon: Home },
@@ -97,6 +198,367 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           <div className="flex items-center space-x-3 ml-auto">
+            {/* Admissions Notification Center - Nút thông báo tuyển sinh vẫn hiện khi có phụ huynh đăng ký */}
+            {(isAdmin || registrations.length > 0) && (
+              <div className="relative" ref={notificationMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setShowNotificationMenu(!showNotificationMenu)}
+                  className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold shadow-xs cursor-pointer transition-all ${
+                    pendingCount > 0
+                      ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-400/40'
+                      : 'bg-emerald-800/80 hover:bg-emerald-700 text-emerald-100 border border-emerald-600/40'
+                  }`}
+                  title="Thông báo phụ huynh đăng ký tuyển sinh"
+                >
+                  <Bell className={`w-3.5 h-3.5 ${pendingCount > 0 ? 'text-slate-950 animate-bounce' : 'text-amber-300'}`} />
+                  <span className="font-semibold">Tuyển Sinh</span>
+                  {pendingCount > 0 ? (
+                    <span className="bg-red-600 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                      {pendingCount} mới
+                    </span>
+                  ) : (
+                    <span className="bg-emerald-950/70 text-emerald-200 text-[10px] px-1.5 py-0.2 rounded-full">
+                      {registrations.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Notification Popover Dropdown */}
+                {showNotificationMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white text-slate-900 rounded-2xl shadow-2xl border border-emerald-200 p-4 z-50 animate-in fade-in zoom-in-95 duration-150">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 mb-2.5">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                          <GraduationCap className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-xs text-slate-900">
+                            Tiếp Nhận Đăng Ký Tuyển Sinh
+                          </h4>
+                          <p className="text-[10px] text-slate-500">
+                            {registrations.length} hồ sơ • {pendingCount} chưa liên hệ
+                          </p>
+                        </div>
+                      </div>
+                      {pendingCount > 0 && (
+                        <span className="text-[10px] font-black bg-red-100 text-red-700 px-2 py-0.5 rounded-full border border-red-200">
+                          {pendingCount} đơn mới
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Quick registrations list preview */}
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1 text-xs">
+                      {registrations.length === 0 ? (
+                        <div className="py-6 text-center text-xs text-slate-500">
+                          <GraduationCap className="w-8 h-8 mx-auto text-slate-300 mb-1" />
+                          <p className="font-semibold">Danh sách đang trống</p>
+                          <p className="text-[10px] text-slate-400">
+                            Khi phụ huynh đăng ký, thông báo sẽ hiển thị tại đây.
+                          </p>
+                        </div>
+                      ) : (
+                        registrations.slice(0, 3).map((reg) => (
+                          <div
+                            key={reg.id}
+                            className="p-2 rounded-xl bg-slate-50 border border-slate-100 hover:border-emerald-300 transition-colors space-y-1"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-900">{reg.parentName}</span>
+                              <span
+                                className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
+                                  reg.status === 'contacted'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-amber-100 text-amber-900'
+                                }`}
+                              >
+                                {reg.status === 'contacted' ? 'Đã liên hệ' : 'Chưa liên hệ'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-600 flex items-center justify-between">
+                              <span>HS: <strong>{reg.childName}</strong> ({reg.campusChoice})</span>
+                              <a
+                                href={`tel:${reg.phone}`}
+                                className="font-mono text-emerald-700 hover:underline font-bold"
+                              >
+                                {reg.phone}
+                              </a>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {/* Actions: Chỉ khi quản trị viên đăng nhập thì 2 nút Tải Excel & Xem Danh Sách mới hiện ra */}
+                    {isAdmin ? (
+                      <div className="pt-3 mt-2.5 border-t border-slate-100 space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            exportRegistrationsToExcel(registrations);
+                            setShowNotificationMenu(false);
+                          }}
+                          className="w-full bg-amber-400 hover:bg-amber-300 text-slate-950 font-black py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                          title="Tải toàn bộ danh sách phụ huynh đăng ký ra file Excel (.xlsx)"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>Tải Danh Sách Tổng Hợp (Excel)</span>
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowNotificationMenu(false);
+                              if (onOpenAdmissionsSummary) {
+                                onOpenAdmissionsSummary();
+                              } else {
+                                onNavigate('admissions');
+                              }
+                            }}
+                            className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-1.5 px-2.5 rounded-lg text-[11px] text-center transition-colors cursor-pointer"
+                          >
+                            Xem Danh Sách ({registrations.length})
+                          </button>
+
+                          {onOpenAdminAdmissions && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowNotificationMenu(false);
+                                onOpenAdminAdmissions();
+                              }}
+                              className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-1.5 px-2.5 rounded-lg text-[11px] transition-colors cursor-pointer"
+                            >
+                              Quản Trị
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Nút xoá tất cả danh sách khi đã tuyển sinh xong (chỉ quản trị viên mới được thao tác) */}
+                        {registrations.length > 0 && (
+                          confirmClearAllNav ? (
+                            <div className="w-full flex items-center justify-between gap-1 p-1 bg-red-100 border border-red-300 rounded-lg text-xs animate-in fade-in">
+                              <span className="text-[10px] font-bold text-red-900 px-1">Xóa sạch?</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    clearAllRegistrations();
+                                    setConfirmClearAllNav(false);
+                                    setShowNotificationMenu(false);
+                                  }}
+                                  className="bg-red-600 hover:bg-red-700 text-white font-bold px-2 py-0.5 rounded text-[10px] shadow-xs cursor-pointer"
+                                >
+                                  Đồng ý
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmClearAllNav(false)}
+                                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-1.5 py-0.5 rounded text-[10px] cursor-pointer"
+                                >
+                                  Hủy
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmClearAllNav(true)}
+                              className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 text-[11px] font-bold py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 transition-colors cursor-pointer border border-red-200/60"
+                              title="Xoá toàn bộ danh sách khi nhà trường đã hoàn tất đợt tuyển sinh"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                              <span>Xóa Tất Cả Danh Sách (Đã Tuyển Sinh Xong)</span>
+                            </button>
+                          )
+                        )}
+                      </div>
+                    ) : (
+                      <div className="pt-2 mt-2 border-t border-slate-100 text-center">
+                        <p className="text-[11px] text-slate-500">
+                          Nhà trường sẽ liên hệ tư vấn chu đáo theo thông tin đăng ký của phụ huynh.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Feedback / Contact Notifications - Nút thông báo ý kiến đóng góp */}
+            {(isAdmin || feedbackList.length > 0) && (
+              <div className="relative" ref={feedbackMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isAdmin) {
+                      setShowFeedbackMenu(!showFeedbackMenu);
+                    }
+                  }}
+                  className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold shadow-xs transition-all ${
+                    isAdmin ? 'cursor-pointer hover:opacity-90' : 'cursor-default'
+                  } ${
+                    pendingFeedbackCount > 0
+                      ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-400/40'
+                      : 'bg-emerald-800/80 text-emerald-100 border border-emerald-600/40'
+                  }`}
+                  title={isAdmin ? 'Bấm để xem hộp thư ý kiến đóng góp' : undefined}
+                >
+                  <MessageSquareText className={`w-3.5 h-3.5 ${pendingFeedbackCount > 0 ? 'text-slate-950 animate-bounce' : 'text-amber-300'}`} />
+                  <span className="font-semibold">Ý Kiến</span>
+                  {pendingFeedbackCount > 0 ? (
+                    <span className="bg-red-600 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                      {pendingFeedbackCount} mới
+                    </span>
+                  ) : (
+                    <span className="bg-emerald-950/70 text-emerald-200 text-[10px] px-1.5 py-0.2 rounded-full">
+                      {feedbackList.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Feedback Popover Dropdown - CHỈ hiển thị khi Quản trị viên đã đăng nhập */}
+                {isAdmin && showFeedbackMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white text-slate-900 rounded-2xl shadow-2xl border border-emerald-200 p-4 z-50 animate-in fade-in zoom-in-95 duration-150">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 mb-2.5">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                          <MessageSquareText className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-xs text-slate-900">
+                            Hộp Thư Ý Kiến Đóng Góp
+                          </h4>
+                          <p className="text-[10px] text-slate-500">
+                            {feedbackList.length} ý kiến • {pendingFeedbackCount} chưa phản hồi
+                          </p>
+                        </div>
+                      </div>
+                      {pendingFeedbackCount > 0 && (
+                        <span className="text-[10px] font-black bg-red-100 text-red-700 px-2 py-0.5 rounded-full border border-red-200">
+                          {pendingFeedbackCount} mới
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Quick feedback list preview (Admin only) */}
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1 text-xs">
+                      {feedbackList.length === 0 ? (
+                        <div className="py-6 text-center text-xs text-slate-500">
+                          <MessageSquareText className="w-8 h-8 mx-auto text-slate-300 mb-1" />
+                          <p className="font-semibold">Chưa có ý kiến đóng góp</p>
+                        </div>
+                      ) : (
+                        feedbackList.slice(0, 3).map((fb) => (
+                          <div
+                            key={fb.id}
+                            className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 hover:border-emerald-300 transition-colors space-y-1.5"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-900 text-xs truncate max-w-[150px]">
+                                {fb.fullName}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {fb.submittedAt}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-700 line-clamp-2 italic bg-white p-2 rounded-lg border border-slate-100">
+                              "{fb.message}"
+                            </div>
+                            <div className="flex items-center justify-between pt-0.5">
+                              <span className="text-[10px] font-semibold text-emerald-700 font-mono">
+                                SĐT: {fb.phone}
+                              </span>
+                              <span
+                                className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
+                                  fb.status === 'resolved'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-amber-100 text-amber-900 font-extrabold'
+                                }`}
+                              >
+                                {fb.status === 'resolved' ? 'Đã tiếp thu' : 'Chờ phản hồi'}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {/* Actions in Dropdown for Admin */}
+                    <div className="pt-2.5 mt-2 border-t border-slate-100 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          exportFeedbackToExcel(feedbackList);
+                          setShowFeedbackMenu(false);
+                        }}
+                        className="w-full bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold py-1.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-slate-950" />
+                        <span>Tải Danh Sách Tổng Hợp (Excel)</span>
+                      </button>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowFeedbackMenu(false);
+                            if (onOpenAdminFeedback) onOpenAdminFeedback();
+                            else if (onOpenAdmin) onOpenAdmin();
+                          }}
+                          className="flex-1 bg-slate-800 hover:bg-slate-900 text-white font-bold py-1.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <span>Xem Toàn Bộ Ý Kiến</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Nút xoá tất cả ý kiến khi quản trị viên đăng nhập */}
+                      {feedbackList.length > 0 && (
+                        confirmClearFeedbackNav ? (
+                          <div className="w-full flex items-center justify-between gap-1 p-1 bg-red-100 border border-red-300 rounded-lg text-xs animate-in fade-in">
+                            <span className="text-[10px] font-bold text-red-900 px-1">Xóa sạch?</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  clearAllFeedback();
+                                  setConfirmClearFeedbackNav(false);
+                                  setShowFeedbackMenu(false);
+                                }}
+                                className="bg-red-600 hover:bg-red-700 text-white font-bold px-2 py-0.5 rounded text-[10px] shadow-xs cursor-pointer"
+                              >
+                                Đồng ý
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmClearFeedbackNav(false)}
+                                className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-1.5 py-0.5 rounded text-[10px] cursor-pointer"
+                              >
+                                Hủy
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmClearFeedbackNav(true)}
+                            className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 text-[11px] font-bold py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 transition-colors cursor-pointer border border-red-200/60"
+                            title="Xóa toàn bộ danh sách ý kiến đóng góp"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                            <span>Xóa Tất Cả Hộp Thư Ý Kiến</span>
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Member Login button - Always visible */}
             {currentMember ? (
               <div className="flex items-center bg-emerald-700/60 border border-emerald-500/40 text-emerald-100 px-2.5 py-0.5 rounded-full text-[11px]">

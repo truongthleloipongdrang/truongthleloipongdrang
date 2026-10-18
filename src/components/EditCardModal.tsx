@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Save,
@@ -60,12 +60,27 @@ export const EditCardModal: React.FC<EditCardModalProps> = ({
   onClose,
   onSave,
 }) => {
-  if (!isOpen || !cardData) return null;
-
-  const [form, setForm] = useState<EditableCardPayload>({ ...cardData });
+  const [form, setForm] = useState<EditableCardPayload>(() =>
+    cardData
+      ? { ...cardData }
+      : {
+          sectionKey: '',
+          title: '',
+          content: '',
+        }
+  );
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiSuccessMessage, setAiSuccessMessage] = useState('');
   const [showPresets, setShowPresets] = useState(false);
+
+  useEffect(() => {
+    if (cardData && isOpen) {
+      setForm({ ...cardData });
+      setAiSuccessMessage('');
+    }
+  }, [cardData, isOpen]);
+
+  if (!isOpen || !cardData) return null;
 
   const handleAiBio = async () => {
     setIsGeneratingAi(true);
