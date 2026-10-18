@@ -48,6 +48,8 @@ jobs:
             --exclude='App.tsx' \
             --exclude='data.ts' \
             --exclude='onlineStore.ts' \
+            --exclude='admissionsStorage.ts' \
+            --exclude='feedbackStorage.ts' \
             --exclude='siteContentSync.ts' \
             --exclude='geminiConfig.ts' \
             --exclude='studentExcelHelper.ts' \
