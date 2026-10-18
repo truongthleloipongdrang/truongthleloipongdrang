@@ -29,6 +29,12 @@ jobs:
       - name: Install isolated test dependencies
         working-directory: tests/rules-runner
         run: npm install --no-audit --no-fund
+      
+      - name: Kiem tra hai file Firestore Rules giong nhau
+        run: |
+          cmp tests/firestore.rules tests/rules-runner/firestore.rules
+          echo "Hai file Firestore Rules giong nhau."
+
       - name: Run Firestore Emulator tests
         working-directory: tests/rules-runner
         run: npx firebase emulators:exec --project demo-leloi-firestore-rules --only firestore --config firebase.json "npm test"
