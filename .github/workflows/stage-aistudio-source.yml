@@ -1,0 +1,59 @@
+
+name: Stage AI Studio source for review
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v4
+        with:
+          ref: test/aistudio-full-sync
+          persist-credentials: true
+
+      - name: Checkout AI Studio Private
+        uses: actions/checkout@v4
+        with:
+          repository: truongthleloipongdrang/truongthleloi-aistudio
+          ref: main
+          token: ${{ secrets.AISTUDIO_READ_TOKEN }}
+          persist-credentials: false
+          path: aistudio-source
+
+      - name: Verify source files
+        run: |
+          test -f aistudio-source/src/App.tsx
+          test -f aistudio-source/src/onlineStore.ts
+          test -f aistudio-source/src/authEnvironment.ts
+          test -f aistudio-source/src/components/AdminModal.tsx
+          test -f aistudio-source/vite.config.ts
+
+      - name: Copy source to test branch
+        run: |
+          rsync -a --delete \
+            --exclude='.env*' \
+            aistudio-source/src/ src/
+          cp aistudio-source/vite.config.ts vite.config.ts
+
+      - name: Show changes
+        run: git status --short
+
+      - name: Commit tested source to branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- src vite.config.ts
+          if git diff --cached --quiet; then
+            echo "No source changes."
+            exit 0
+          fi
+          git commit -m "Stage complete AI Studio source for review"
+          git push origin HEAD:test/aistudio-full-sync
