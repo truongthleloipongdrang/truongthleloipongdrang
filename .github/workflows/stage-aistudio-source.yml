@@ -2,6 +2,11 @@
 name: Stage AI Studio source for review
 
 on:
+  push:
+    branches:
+      - test/aistudio-full-sync
+    paths:
+      - '.github/workflows/stage-aistudio-source.yml'
   workflow_dispatch:
 
 permissions:
