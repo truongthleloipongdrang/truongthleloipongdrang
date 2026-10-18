@@ -1,0 +1,89 @@
+
+name: Kiem thu dong bo AI Studio day du
+
+on:
+  push:
+    branches:
+      - test/aistudio-full-sync
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout website test
+        uses: actions/checkout@v4
+
+      - name: Checkout AI Studio Private
+        uses: actions/checkout@v4
+        with:
+          repository: truongthleloipongdrang/truongthleloi-aistudio
+          ref: main
+          token: ${{ secrets.AISTUDIO_READ_TOKEN }}
+          persist-credentials: false
+          path: aistudio-source
+
+      - name: Kiem tra thu vien
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const a = JSON.parse(fs.readFileSync('aistudio-source/package.json'));
+          const b = JSON.parse(fs.readFileSync('package.json'));
+
+          for (const group of ['dependencies', 'devDependencies']) {
+            const left = a[group] || {};
+            const right = b[group] || {};
+            if (JSON.stringify(Object.entries(left).sort()) !==
+                JSON.stringify(Object.entries(right).sort())) {
+              throw new Error(`Thu vien khac nhau: ${group}`);
+            }
+          }
+          console.log('Thu vien hai kho tuong thich.');
+          NODE
+
+      - name: Kiem tra file nguon
+        run: |
+          test -f aistudio-source/src/App.tsx
+          test -f aistudio-source/src/onlineStore.ts
+          test -f aistudio-source/src/authEnvironment.ts
+          test -f aistudio-source/src/components/AdminModal.tsx
+          test -f aistudio-source/vite.config.ts
+
+      - name: Dong bo day du de KIEM THU
+        run: |
+          rsync -a --delete \
+            --exclude='.env*' \
+            aistudio-source/src/ src/
+          cp aistudio-source/vite.config.ts vite.config.ts
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Kiem tra TypeScript
+        run: npx tsc --noEmit
+
+      - name: Build website
+        run: npm run build
+        env:
+          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_ADMIN_EMAIL: ${{ vars.VITE_FIREBASE_ADMIN_EMAIL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Kiem tra ket qua
+        run: |
+          echo "Da hoan thanh kiem thu."
+          echo "Khong commit, khong tao PR, khong deploy."
