@@ -158,6 +158,28 @@ export interface AdmissionsData {
   homeTeaserButtonText?: string;
 }
 
+export interface AdmissionRegistration {
+  id: string;
+  parentName: string;
+  phone: string;
+  childName: string;
+  birthYear: string;
+  campusChoice: string;
+  note: string;
+  submittedAt: string;
+  status: 'pending' | 'contacted';
+}
+
+export interface FeedbackSubmission {
+  id: string;
+  fullName: string;
+  phone: string;
+  email?: string;
+  message: string;
+  submittedAt: string;
+  status: 'pending' | 'resolved';
+}
+
 export const STUDENT_CAMPUS_OPTIONS = [
   'Trường chính',
   'Phân hiệu 1',
