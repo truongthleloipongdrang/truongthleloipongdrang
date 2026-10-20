@@ -45,15 +45,16 @@ export const AdmissionsSummaryModal: React.FC<AdmissionsSummaryModalProps> = ({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
 
-  const handleDeleteReg = (id: string) => {
-    deleteRegistration(id);
+  const handleDeleteReg = async (id: string) => {
+    try {
+      await deleteRegistration(id);
     setRegistrations((prev) => prev.filter((r) => r.id !== id));
     setConfirmDeleteId(null);
+    } catch (err) { window.alert("Không xóa được hồ sơ trên Firebase: " + String(err)); }
   };
 
   const handleClearAllRegs = () => {
-    clearAllRegistrations();
-    setRegistrations([]);
+    window.alert('Chức năng Xóa tất cả đã khóa để bảo vệ hồ sơ thực.');
     setConfirmClearAll(false);
   };
 
@@ -309,7 +310,7 @@ export const AdmissionsSummaryModal: React.FC<AdmissionsSummaryModalProps> = ({
                             updateRegistrationStatus(
                               reg.id,
                               reg.status === 'contacted' ? 'pending' : 'contacted'
-                            )
+                            ).catch((err) => window.alert('Không cập nhật được hồ sơ trên Firebase: ' + (err instanceof Error ? err.message : String(err))))
                           }
                           className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
                             reg.status === 'contacted'

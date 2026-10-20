@@ -319,29 +319,26 @@ export function addFeedbackSubmission(data: {
   return localFb;
 }
 
-export function updateFeedbackStatus(id: string, status: 'pending' | 'read' | 'resolved'): void {
-  const current = getStoredFeedback();
-  const updated = current.map((f) => (f.id === id ? { ...f, status, updatedAt: new Date().toISOString() } : f));
-  saveFeedback(updated);
-
-  if (!isTrustedPreviewEnvironment() && isOnlineAuthenticated()) {
-    updateFeedbackStatusInFirestore(id, status).catch((err) => {
-      console.warn('Lỗi cập nhật trạng thái góp ý Firestore:', err);
-    });
+// Wait for Firestore before showing a new status in the administrator UI.
+export async function updateFeedbackStatus(id: string, status: 'pending' | 'read' | 'resolved'): Promise<void> {
+  if (!isTrustedPreviewEnvironment()) {
+    if (!isFirebaseConfigured() || !isOnlineAuthenticated()) {
+      throw new Error('Chưa kết nối hoặc đăng nhập Firebase. Không thể cập nhật ý kiến.');
+    }
+    await updateFeedbackStatusInFirestore(id, status);
   }
+  saveFeedback(getStoredFeedback().map((f) => f.id === id ? { ...f, status, updatedAt: new Date().toISOString() } : f));
 }
 
-export function deleteFeedback(id: string): void {
-  recordDeletedFeedbackId(id);
-  const current = getStoredFeedback();
-  const updated = current.filter((f) => f.id !== id);
-  saveFeedback(updated);
-
-  if (!isTrustedPreviewEnvironment() && isOnlineAuthenticated()) {
-    deleteFeedbackFromFirestore(id).catch((err) => {
-      console.warn('Lỗi xóa góp ý Firestore:', err);
-    });
+export async function deleteFeedback(id: string): Promise<void> {
+  if (!isTrustedPreviewEnvironment()) {
+    if (!isFirebaseConfigured() || !isOnlineAuthenticated()) {
+      throw new Error('Chưa kết nối hoặc đăng nhập Firebase. Không thể xóa ý kiến.');
+    }
+    await deleteFeedbackFromFirestore(id);
   }
+  recordDeletedFeedbackId(id);
+  saveFeedback(getStoredFeedback().filter((f) => f.id !== id));
 }
 
 export function clearAllFeedback(): void {

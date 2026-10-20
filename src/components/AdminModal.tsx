@@ -194,15 +194,16 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [confirmDeleteRegId, setConfirmDeleteRegId] = useState<string | null>(null);
   const [confirmClearAllAdmissions, setConfirmClearAllAdmissions] = useState(false);
 
-  const handleDeleteAdmissionReg = (id: string) => {
-    deleteRegistration(id);
+  const handleDeleteAdmissionReg = async (id: string) => {
+    try {
+      await deleteRegistration(id);
     setAdmissionsList((prev) => prev.filter((r) => r.id !== id));
     setConfirmDeleteRegId(null);
+    } catch (err) { window.alert("Không xóa được hồ sơ trên Firebase: " + String(err)); }
   };
 
   const handleClearAllAdmissionRegs = () => {
-    clearAllRegistrations();
-    setAdmissionsList([]);
+    window.alert('Chức năng Xóa tất cả đã khóa để bảo vệ hồ sơ thực.');
     setConfirmClearAllAdmissions(false);
   };
 
@@ -219,15 +220,16 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [syncingAdmissions, setSyncingAdmissions] = useState(false);
   const [syncingFeedback, setSyncingFeedback] = useState(false);
 
-  const handleDeleteFeedbackItem = (id: string) => {
-    deleteFeedback(id);
+  const handleDeleteFeedbackItem = async (id: string) => {
+    try {
+      await deleteFeedback(id);
     setFeedbackList((prev) => prev.filter((f) => f.id !== id));
     setConfirmDeleteFeedbackId(null);
+    } catch (err) { window.alert("Không xóa được ý kiến trên Firebase: " + String(err)); }
   };
 
   const handleClearAllFeedbackItems = () => {
-    clearAllFeedback();
-    setFeedbackList([]);
+    window.alert('Chức năng Xóa tất cả đã khóa để bảo vệ ý kiến thực.');
     setConfirmClearAllFeedback(false);
   };
 
@@ -2389,7 +2391,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                       updateRegistrationStatus(
                                         reg.id,
                                         reg.status === 'contacted' ? 'pending' : 'contacted'
-                                      )
+                                      ).catch((err) => window.alert('Không cập nhật được hồ sơ trên Firebase: ' + (err instanceof Error ? err.message : String(err))))
                                     }
                                     className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 transition-all cursor-pointer ${
                                       reg.status === 'contacted'
@@ -2681,7 +2683,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                       updateFeedbackStatus(
                                         fb.id,
                                         fb.status === 'resolved' ? 'pending' : 'resolved'
-                                      )
+                                      ).catch((err) => window.alert('Không cập nhật được ý kiến trên Firebase: ' + (err instanceof Error ? err.message : String(err))))
                                     }
                                     className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 transition-all cursor-pointer ${
                                       fb.status === 'resolved'
@@ -2812,14 +2814,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              updateFeedbackStatus(
-                                viewingFeedbackDetail.id,
-                                viewingFeedbackDetail.status === 'resolved' ? 'pending' : 'resolved'
-                              );
-                              setViewingFeedbackDetail({
-                                ...viewingFeedbackDetail,
-                                status: viewingFeedbackDetail.status === 'resolved' ? 'pending' : 'resolved',
-                              });
+                              const nextStatus = viewingFeedbackDetail.status === 'resolved' ? 'pending' : 'resolved';
+                              void updateFeedbackStatus(viewingFeedbackDetail.id, nextStatus)
+                                .then(() => setViewingFeedbackDetail((prev) => prev ? { ...prev, status: nextStatus } : null))
+                                .catch((err) => window.alert('Không cập nhật được ý kiến trên Firebase: ' + String(err)));
                             }}
                             className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer ${
                               viewingFeedbackDetail.status === 'resolved'

@@ -387,29 +387,27 @@ export function addAdmissionRegistration(data: {
   return localReg;
 }
 
-export function updateRegistrationStatus(id: string, status: 'pending' | 'contacted'): void {
-  const current = getStoredRegistrations();
-  const updated = current.map((r) => (r.id === id ? { ...r, status, updatedAt: new Date().toISOString() } : r));
-  saveRegistrations(updated);
-
-  if (!isTrustedPreviewEnvironment() && isOnlineAuthenticated()) {
-    updateAdmissionStatusInFirestore(id, status).catch((err) => {
-      console.warn('Lỗi cập nhật trạng thái Firestore:', err);
-    });
+// Only mutate the local cache after the real database confirms the write.
+export async function updateRegistrationStatus(id: string, status: 'pending' | 'contacted'): Promise<void> {
+  if (!isTrustedPreviewEnvironment()) {
+    if (!isFirebaseConfigured() || !isOnlineAuthenticated()) {
+      throw new Error('Chưa kết nối hoặc đăng nhập Firebase. Không thể cập nhật hồ sơ.');
+    }
+    await updateAdmissionStatusInFirestore(id, status);
   }
+  const current = getStoredRegistrations();
+  saveRegistrations(current.map((r) => r.id === id ? { ...r, status, updatedAt: new Date().toISOString() } : r));
 }
 
-export function deleteRegistration(id: string): void {
-  recordDeletedId(id);
-  const current = getStoredRegistrations();
-  const updated = current.filter((r) => r.id !== id);
-  saveRegistrations(updated);
-
-  if (!isTrustedPreviewEnvironment() && isOnlineAuthenticated()) {
-    deleteAdmissionFromFirestore(id).catch((err) => {
-      console.warn('Lỗi xóa hồ sơ Firestore:', err);
-    });
+export async function deleteRegistration(id: string): Promise<void> {
+  if (!isTrustedPreviewEnvironment()) {
+    if (!isFirebaseConfigured() || !isOnlineAuthenticated()) {
+      throw new Error('Chưa kết nối hoặc đăng nhập Firebase. Không thể xóa hồ sơ.');
+    }
+    await deleteAdmissionFromFirestore(id);
   }
+  recordDeletedId(id);
+  saveRegistrations(getStoredRegistrations().filter((r) => r.id !== id));
 }
 
 export function clearAllRegistrations(): void {
