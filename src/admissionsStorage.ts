@@ -1,5 +1,14 @@
 import * as XLSX from 'xlsx';
 import { AdmissionRegistration } from './types';
+import {
+  createAdmissionInFirestore,
+  fetchAdmissionsFromFirestore,
+  updateAdmissionStatusInFirestore,
+  deleteAdmissionFromFirestore,
+  isFirebaseConfigured,
+  isOnlineAuthenticated,
+} from './onlineStore';
+import { isTrustedPreviewEnvironment, MOCK_PREVIEW_ADMISSIONS } from './authEnvironment';
 
 const STORAGE_KEY = 'th_leloi_admissions_registrations_v2';
 export const ADMISSIONS_UPDATE_EVENT = 'th_leloi_admissions_updated';
@@ -43,47 +52,13 @@ export function playNotificationChime(): void {
   }
 }
 
-export const SAMPLE_ADMISSIONS_REGISTRATIONS: AdmissionRegistration[] = [
-  {
-    id: 'reg-sample-1',
-    parentName: 'Y-Kha Mlô',
-    phone: '0945823114',
-    childName: 'H’Nhiên Mlô',
-    birthYear: '2020',
-    campusChoice: 'Trường chính (Thôn Ea Tút)',
-    note: 'Xin tư vấn về thời gian tiếp nhận hồ sơ gốc và thủ tục hỗ trợ chi phí học tập cho con em đồng bào.',
-    submittedAt: '2026-10-10 08:30:00',
-    status: 'pending',
-  },
-  {
-    id: 'reg-sample-2',
-    parentName: 'Nguyễn Thị Thu Hà',
-    phone: '0912445892',
-    childName: 'Nguyễn Minh Khang',
-    birthYear: '2020',
-    campusChoice: 'Phân hiệu 1',
-    note: 'Gia đình ở gần Phân hiệu 1, muốn hỏi về việc chuẩn bị sách vở và đồ dùng lớp 1 cho cháu.',
-    submittedAt: '2026-10-11 14:15:00',
-    status: 'contacted',
-  },
-  {
-    id: 'reg-sample-3',
-    parentName: 'Trần Văn Hùng',
-    phone: '0988712345',
-    childName: 'Trần Gia Hân',
-    birthYear: '2020',
-    campusChoice: 'Phân hiệu 2',
-    note: 'Xin hỏi thời khóa biểu học 2 buổi/ngày và chương trình làm quen Tiếng Anh lớp 1.',
-    submittedAt: '2026-10-12 07:20:00',
-    status: 'pending',
-  },
-];
+export const SAMPLE_ADMISSIONS_REGISTRATIONS: AdmissionRegistration[] = [];
 
 // Multi-tab BroadcastChannel for instant real-time sync across all open browser tabs
 const ADMISSIONS_BC_NAME = 'th_leloi_admissions_channel';
 let channel: BroadcastChannel | null = null;
 try {
-  if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+  if (typeof window !== 'undefined' && !isTrustedPreviewEnvironment() && 'BroadcastChannel' in window) {
     channel = new BroadcastChannel(ADMISSIONS_BC_NAME);
     channel.onmessage = (event) => {
       const msg = event.data;
@@ -111,7 +86,7 @@ try {
 } catch {}
 
 // Cross-tab storage event listener
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && !isTrustedPreviewEnvironment()) {
   window.addEventListener('storage', (e) => {
     if (e.key === STORAGE_KEY && e.newValue) {
       try {
@@ -145,122 +120,11 @@ function recordDeletedId(id: string) {
   } catch {}
 }
 
-/**
- * Khởi tạo đồng bộ tuyển sinh với server và lắng nghe Server-Sent Events (SSE)
- */
-export function initAdmissionsSync(): void {
-  if (typeof window === 'undefined') return;
-
-  // 1. Đồng bộ danh sách ban đầu từ server
-  const processServerList = (serverList: any[], isInitial: boolean) => {
-    if (!Array.isArray(serverList)) return;
-    const deletedIds = getDeletedIds();
-    const validServerList = serverList.filter((r) => !deletedIds.has(r.id));
-
-    const local = getStoredRegistrations();
-    const localMap = new Map<string, AdmissionRegistration>();
-    local.forEach((r) => {
-      if (!deletedIds.has(r.id)) localMap.set(r.id, r);
-    });
-
-    const localIds = new Set(localMap.keys());
-    const newItems = validServerList.filter((r) => !localIds.has(r.id));
-
-    validServerList.forEach((r) => localMap.set(r.id, r));
-    const merged = Array.from(localMap.values());
-
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-    } catch {}
-
-    window.dispatchEvent(new CustomEvent(ADMISSIONS_UPDATE_EVENT, { detail: merged }));
-
-    // Nếu có đăng ký mới tinh từ phụ huynh gửi về trong lúc đang mở trang
-    if (newItems.length > 0 && !isInitial) {
-      playNotificationChime();
-      window.dispatchEvent(
-        new CustomEvent(NEW_ADMISSION_NOTIFICATION_EVENT, { detail: newItems[0] })
-      );
-    }
-  };
-
-  fetch('/api/admissions')
-    .then((res) => (res.ok ? res.json() : null))
-    .then((serverList) => {
-      if (serverList) processServerList(serverList, true);
-    })
-    .catch(() => {});
-
-  // 2. Định kỳ polling mỗi 15 giây để đảm bảo không bỏ sót đăng ký nào từ phụ huynh
-  const pollInterval = setInterval(() => {
-    fetch('/api/admissions')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((serverList) => {
-        if (serverList) processServerList(serverList, false);
-      })
-      .catch(() => {});
-  }, 15000);
-
-  // 3. Kết nối Server-Sent Events để nhận thông báo real-time tức thì
-  let es: EventSource | null = null;
-  const connectSSE = () => {
-    try {
-      es = new EventSource('/api/admissions/stream');
-      es.addEventListener('new_admission', (e: MessageEvent) => {
-        try {
-          const newReg = JSON.parse(e.data);
-          if (newReg && newReg.id) {
-            const deletedIds = getDeletedIds();
-            if (deletedIds.has(newReg.id)) return;
-
-            const current = getStoredRegistrations();
-            if (!current.some((r) => r.id === newReg.id)) {
-              const updated = [newReg, ...current];
-              try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-              } catch {}
-              window.dispatchEvent(new CustomEvent(ADMISSIONS_UPDATE_EVENT, { detail: updated }));
-              playNotificationChime();
-              window.dispatchEvent(
-                new CustomEvent(NEW_ADMISSION_NOTIFICATION_EVENT, { detail: newReg })
-              );
-            }
-          }
-        } catch {}
-      });
-
-      es.addEventListener('delete_admission', (e: MessageEvent) => {
-        try {
-          const { id } = JSON.parse(e.data);
-          if (id) {
-            recordDeletedId(id);
-            const current = getStoredRegistrations().filter((r) => r.id !== id);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
-            window.dispatchEvent(new CustomEvent(ADMISSIONS_UPDATE_EVENT, { detail: current }));
-          }
-        } catch {}
-      });
-
-      es.addEventListener('clear_admissions', () => {
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
-          window.dispatchEvent(new CustomEvent(ADMISSIONS_UPDATE_EVENT, { detail: [] }));
-        } catch {}
-      });
-
-      es.onerror = () => {
-        if (es) {
-          es.close();
-          es = null;
-        }
-        setTimeout(connectSSE, 6000);
-      };
-    } catch {}
-  };
-  connectSSE();
-}
-
 export function getStoredRegistrations(): AdmissionRegistration[] {
+  // Chế độ xem trước AI Studio: luôn sử dụng dữ liệu mẫu riêng biệt
+  if (isTrustedPreviewEnvironment()) {
+    return MOCK_PREVIEW_ADMISSIONS;
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw !== null) {
@@ -281,7 +145,10 @@ export function getStoredRegistrations(): AdmissionRegistration[] {
 
 export function saveRegistrations(regs: AdmissionRegistration[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(regs));
+    // Không ghi vào localStorage trong chế độ xem trước
+    if (!isTrustedPreviewEnvironment()) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(regs));
+    }
     window.dispatchEvent(new CustomEvent(ADMISSIONS_UPDATE_EVENT, { detail: regs }));
     if (channel) {
       try {
@@ -293,6 +160,184 @@ export function saveRegistrations(regs: AdmissionRegistration[]): void {
   }
 }
 
+/**
+ * Đồng bộ danh sách hồ sơ tuyển sinh từ Cloud Firestore (khi Quản trị viên đã đăng nhập)
+ */
+export async function syncAdmissionsWithFirestore(notifyNew = false): Promise<AdmissionRegistration[]> {
+  if (isTrustedPreviewEnvironment()) {
+    return [...MOCK_PREVIEW_ADMISSIONS];
+  }
+
+  if (!isOnlineAuthenticated()) {
+    return getStoredRegistrations();
+  }
+
+  try {
+    const remoteList = await fetchAdmissionsFromFirestore();
+    // Cloud Firestore is authoritative after successful authenticated read.
+    // Keep an untouched snapshot of browser-only records for manual recovery.
+    const local = getStoredRegistrations();
+    const remoteIds = new Set(remoteList.map((r) => r.id));
+    const legacy = local.filter((r) => !remoteIds.has(r.id));
+    if (legacy.length > 0) {
+      try {
+        const key = 'th_leloi_legacy_admissions_backup_v1';
+        if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify(legacy));
+      } catch {}
+    }
+    const newItems = remoteList.filter((r) => !local.some((previous) => previous.id === r.id));
+    const merged = [...remoteList].sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
+    saveRegistrations(merged);
+
+    if (newItems.length > 0 && notifyNew) {
+      playNotificationChime();
+      window.dispatchEvent(
+        new CustomEvent(NEW_ADMISSION_NOTIFICATION_EVENT, { detail: newItems[0] })
+      );
+    }
+
+    return merged;
+  } catch (err) {
+    console.warn('Lỗi đồng bộ hồ sơ tuyển sinh từ Cloud Firestore:', err);
+    return getStoredRegistrations();
+  }
+}
+
+/**
+ * Khởi tạo đồng bộ tuyển sinh với Cloud Firestore và polling định kỳ
+ */
+export function initAdmissionsSync(): void {
+  if (typeof window === 'undefined') return;
+
+  // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Tuyệt đối không khởi tạo sync hoặc polling với Firestore trong preview
+  if (isTrustedPreviewEnvironment()) return;
+
+  // 1. Đồng bộ ban đầu nếu quản trị viên đã đăng nhập
+  if (isOnlineAuthenticated()) {
+    syncAdmissionsWithFirestore(false);
+  }
+
+  // 2. Định kỳ kiểm tra đăng ký mới từ Cloud Firestore mỗi 20 giây khi có phiên đăng nhập
+  const pollInterval = setInterval(() => {
+    if (isOnlineAuthenticated()) {
+      syncAdmissionsWithFirestore(true);
+    }
+  }, 20000);
+
+  // Fallback: Nếu đang ở môi trường dev có backend Express, lắng nghe SSE
+  if (import.meta.env.DEV) {
+    try {
+      const es = new EventSource('/api/admissions/stream');
+      es.addEventListener('new_admission', (e: MessageEvent) => {
+        try {
+          const newReg = JSON.parse(e.data);
+          if (newReg && newReg.id) {
+            const deletedIds = getDeletedIds();
+            if (deletedIds.has(newReg.id)) return;
+            const current = getStoredRegistrations();
+            if (!current.some((r) => r.id === newReg.id)) {
+              const updated = [newReg, ...current];
+              saveRegistrations(updated);
+              playNotificationChime();
+              window.dispatchEvent(
+                new CustomEvent(NEW_ADMISSION_NOTIFICATION_EVENT, { detail: newReg })
+              );
+            }
+          }
+        } catch {}
+      });
+      es.onerror = () => {
+        es.close();
+      };
+    } catch {}
+  }
+}
+
+/**
+ * Thêm hồ sơ đăng ký tuyển sinh trực tuyến (Async - Lưu trực tiếp vào Cloud Firestore)
+ */
+export async function addAdmissionRegistrationAsync(data: {
+  parentName: string;
+  phone: string;
+  childName: string;
+  birthYear: string;
+  campusChoice: string;
+  note: string;
+}): Promise<AdmissionRegistration> {
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+    now.getDate()
+  ).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(
+    2,
+    '0'
+  )}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+  let createdRecord: AdmissionRegistration;
+
+  if (isTrustedPreviewEnvironment()) {
+    // Chế độ xem trước AI Studio: sinh bản ghi mẫu trong bộ nhớ, không gửi lên Firestore
+    createdRecord = {
+      id: `preview-reg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      parentName: data.parentName.trim(),
+      phone: data.phone.trim(),
+      childName: data.childName.trim(),
+      birthYear: data.birthYear.trim() || '2020',
+      campusChoice: data.campusChoice || 'Trường chính (Thôn Ea Tút)',
+      note: data.note?.trim() || 'Không có ghi chú',
+      submittedAt: dateStr,
+      status: 'pending',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+  } else if (isFirebaseConfigured()) {
+    // Lưu vào Cloud Firestore chính thức
+    createdRecord = await createAdmissionInFirestore(data);
+  } else {
+    if (import.meta.env.PROD) {
+      throw new Error('Chưa cấu hình Firebase; hồ sơ chưa được gửi. Vui lòng liên hệ nhà trường.');
+    }
+    // Offline fallback is for local development only; not production.
+    createdRecord = {
+      id: `reg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      parentName: data.parentName.trim(),
+      phone: data.phone.trim(),
+      childName: data.childName.trim(),
+      birthYear: data.birthYear.trim() || '2020',
+      campusChoice: data.campusChoice || 'Trường chính (Thôn Ea Tút)',
+      note: data.note.trim() || 'Không có ghi chú',
+      submittedAt: dateStr,
+      status: 'pending',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+  }
+
+  // Cập nhật bộ nhớ đệm phía máy khách
+  const current = getStoredRegistrations();
+  const updated = [createdRecord, ...current.filter((r) => r.id !== createdRecord.id)];
+  saveRegistrations(updated);
+
+  // Broadcast sang các tab khác trong cùng trình duyệt
+  if (channel) {
+    try {
+      channel.postMessage({ type: 'new_admission', payload: createdRecord });
+    } catch {}
+  }
+
+  // Phát chuông báo và phát event thông báo
+  try {
+    playNotificationChime();
+    window.dispatchEvent(
+      new CustomEvent(NEW_ADMISSION_NOTIFICATION_EVENT, { detail: createdRecord })
+    );
+  } catch {}
+
+  return createdRecord;
+}
+
+/**
+ * Giữ wrapper đồng bộ để tương thích ngược các nơi gọi cũ
+ */
 export function addAdmissionRegistration(data: {
   parentName: string;
   phone: string;
@@ -310,7 +355,7 @@ export function addAdmissionRegistration(data: {
     '0'
   )}:${String(now.getSeconds()).padStart(2, '0')}`;
 
-  const newReg: AdmissionRegistration = {
+  const localReg: AdmissionRegistration = {
     id: `reg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     parentName: data.parentName.trim(),
     phone: data.phone.trim(),
@@ -320,50 +365,38 @@ export function addAdmissionRegistration(data: {
     note: data.note.trim() || 'Không có ghi chú',
     submittedAt: dateStr,
     status: 'pending',
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
   };
 
-  const updated = [newReg, ...current];
+  const updated = [localReg, ...current];
   saveRegistrations(updated);
 
-  // Broadcast to other tabs
-  if (channel) {
-    try {
-      channel.postMessage({ type: 'new_admission', payload: newReg });
-    } catch {}
+  if (!isTrustedPreviewEnvironment() && isFirebaseConfigured()) {
+    createAdmissionInFirestore(data)
+      .then((remote) => {
+        const latest = getStoredRegistrations();
+        const replaced = latest.map((r) => (r.id === localReg.id ? remote : r));
+        saveRegistrations(replaced);
+      })
+      .catch((err) => {
+        console.warn('Lỗi ghi Cloud Firestore ngầm:', err);
+      });
   }
 
-  // Push to server for persistent storage and cross-device sync
-  try {
-    fetch('/api/admissions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    }).catch(() => {});
-  } catch {}
-
-  // Phát chuông báo và bắn thông báo hiển thị tới nhà trường / quản trị
-  try {
-    playNotificationChime();
-    window.dispatchEvent(
-      new CustomEvent(NEW_ADMISSION_NOTIFICATION_EVENT, { detail: newReg })
-    );
-  } catch {}
-
-  return newReg;
+  return localReg;
 }
 
 export function updateRegistrationStatus(id: string, status: 'pending' | 'contacted'): void {
   const current = getStoredRegistrations();
-  const updated = current.map((r) => (r.id === id ? { ...r, status } : r));
+  const updated = current.map((r) => (r.id === id ? { ...r, status, updatedAt: new Date().toISOString() } : r));
   saveRegistrations(updated);
 
-  try {
-    fetch(`/api/admissions/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    }).catch(() => {});
-  } catch {}
+  if (!isTrustedPreviewEnvironment() && isOnlineAuthenticated()) {
+    updateAdmissionStatusInFirestore(id, status).catch((err) => {
+      console.warn('Lỗi cập nhật trạng thái Firestore:', err);
+    });
+  }
 }
 
 export function deleteRegistration(id: string): void {
@@ -372,11 +405,11 @@ export function deleteRegistration(id: string): void {
   const updated = current.filter((r) => r.id !== id);
   saveRegistrations(updated);
 
-  try {
-    fetch(`/api/admissions/${id}`, {
-      method: 'DELETE',
-    }).catch(() => {});
-  } catch {}
+  if (!isTrustedPreviewEnvironment() && isOnlineAuthenticated()) {
+    deleteAdmissionFromFirestore(id).catch((err) => {
+      console.warn('Lỗi xóa hồ sơ Firestore:', err);
+    });
+  }
 }
 
 export function clearAllRegistrations(): void {
@@ -384,11 +417,6 @@ export function clearAllRegistrations(): void {
     localStorage.removeItem(DELETED_IDS_KEY);
   } catch {}
   saveRegistrations([]);
-  try {
-    fetch('/api/admissions', {
-      method: 'DELETE',
-    }).catch(() => {});
-  } catch {}
 }
 
 /**
@@ -447,7 +475,6 @@ export function exportRegistrationsToExcel(
   const wsData = [...titleHeader, headers, ...dataRows];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-  // Column widths
   ws['!cols'] = [
     { wch: 6 },  // STT
     { wch: 22 }, // Thời gian

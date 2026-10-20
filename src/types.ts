@@ -158,6 +158,8 @@ export interface AdmissionsData {
   homeTeaserButtonText?: string;
 }
 
+export type UserRole = 'super_admin' | 'admin' | 'editor' | 'viewer';
+
 export interface AdmissionRegistration {
   id: string;
   parentName: string;
@@ -168,6 +170,8 @@ export interface AdmissionRegistration {
   note: string;
   submittedAt: string;
   status: 'pending' | 'contacted';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface FeedbackSubmission {
@@ -177,7 +181,9 @@ export interface FeedbackSubmission {
   email?: string;
   message: string;
   submittedAt: string;
-  status: 'pending' | 'resolved';
+  status: 'pending' | 'read' | 'resolved';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export const STUDENT_CAMPUS_OPTIONS = [
