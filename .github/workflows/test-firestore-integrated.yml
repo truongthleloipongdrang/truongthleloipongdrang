@@ -5,9 +5,11 @@ on:
   push:
     branches:
       - test/website-integrated-safe
+    
     paths:
       - '.github/workflows/test-firestore-integrated.yml'
       - 'tests/**'
+      - 'src/**'
 
 permissions:
   contents: read
