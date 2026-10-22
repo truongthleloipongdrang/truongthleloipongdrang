@@ -1,0 +1,201 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // 1. CÁC HÀM XÁC THỰC & PHÂN QUYỀN VAI TRÒ (RBAC)
+    // =========================================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Lấy vai trò từ Firebase Authentication Custom Claims trong ID Token
+    function hasCustomClaimRole(roleName) {
+      return isAuthenticated() && (
+        request.auth.token.get('role', '') == roleName ||
+        (roleName == 'admin' && request.auth.token.get('admin', false) == true)
+      );
+    }
+
+    // Lấy vai trò từ bảng phân quyền an toàn /userRoles/{uid}
+    function hasFirestoreRole(roleName) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/userRoles/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/userRoles/$(request.auth.uid)).data.get('role', '') == roleName;
+    }
+
+    // Kiểm tra vai trò hợp lệ qua cơ chế đáng tin cậy (Custom Claims hoặc userRoles)
+    function hasRole(roleName) {
+      return hasCustomClaimRole(roleName) || hasFirestoreRole(roleName);
+    }
+
+    // Phân cấp vai trò chặt chẽ: Super Admin > Admin > Editor > Viewer
+    function isSuperAdmin() {
+      return hasRole('super_admin');
+    }
+
+    function isAdmin() {
+      return isSuperAdmin() || hasRole('admin');
+    }
+
+    function isEditor() {
+      return isAdmin() || hasRole('editor');
+    }
+
+    function isViewer() {
+      return isEditor() || hasRole('viewer');
+    }
+
+    // =========================================================================
+    // 2. NỘI DUNG WEBSITE CÔNG KHAI (siteData/publicContent)
+    // =========================================================================
+    match /siteData/publicContent {
+      // Khách vãng lai và mọi người được xem nội dung công khai
+      allow get: if true;
+      allow list: if false;
+
+      // Chỉ Editor, Admin hoặc Super Admin mới được cập nhật nội dung
+      allow create, update: if isEditor()
+        && request.resource.data.keys().hasOnly(['payload'])
+        && request.resource.data.payload is string
+        && request.resource.data.payload.size() < 900000;
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 3. DỮ LIỆU HỌC SINH RIÊNG TƯ (siteData/privateStudents)
+    // =========================================================================
+    match /siteData/privateStudents {
+      // TUYỆT ĐỐI BẢO MẬT: Chỉ Admin hoặc Super Admin mới được đọc và ghi danh sách học sinh
+      allow get: if isAdmin();
+      allow list: if false;
+
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['payload'])
+        && request.resource.data.payload is string
+        && request.resource.data.payload.size() < 900000;
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 4. HỒ SƠ ĐĂNG KÝ TƯ VẤN TUYỂN SINH LỚP 1 (admissions/{id})
+    // =========================================================================
+    match /admissions/{admissionId} {
+      // BẢO VỆ RIÊNG TƯ: Khách công khai không được đọc danh sách hoặc xem hồ sơ người khác
+      allow get, list: if isViewer();
+
+      // Phụ huynh gửi đơn tuyển sinh trực tuyến:
+      // - Chỉ cho phép tạo mới với các trường bắt buộc và định dạng hợp lệ
+      // - Chặn hoàn toàn việc người gửi tự đặt trạng thái khác 'pending'
+      // - Chặn các trường lạ hoặc can thiệp trái phép
+      allow create: if
+        request.resource.data.keys().hasAll(['parentName', 'phone', 'childName', 'submittedAt', 'status'])
+        && request.resource.data.keys().hasOnly([
+          'parentName', 'phone', 'childName', 'birthYear',
+          'campusChoice', 'note', 'submittedAt', 'status',
+          'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.parentName is string
+        && request.resource.data.parentName.size() >= 2
+        && request.resource.data.parentName.size() <= 100
+        && request.resource.data.phone is string
+        && request.resource.data.phone.size() >= 9
+        && request.resource.data.phone.size() <= 15
+        && request.resource.data.childName is string
+        && request.resource.data.childName.size() >= 2
+        && request.resource.data.childName.size() <= 100
+        && (!('birthYear' in request.resource.data) || (request.resource.data.birthYear is string && request.resource.data.birthYear.size() <= 10))
+        && (!('campusChoice' in request.resource.data) || (request.resource.data.campusChoice is string && request.resource.data.campusChoice.size() <= 100))
+        && (!('note' in request.resource.data) || (request.resource.data.note is string && request.resource.data.note.size() <= 1000))
+        && request.resource.data.submittedAt is string
+        && request.resource.data.submittedAt.size() <= 35
+        && (!('createdAt' in request.resource.data) || (request.resource.data.createdAt is string && request.resource.data.createdAt.size() <= 40))
+        && (!('updatedAt' in request.resource.data) || (request.resource.data.updatedAt is string && request.resource.data.updatedAt.size() <= 40));
+
+      // Editor trở lên được cập nhật trạng thái xử lý (pending -> contacted)
+      // Chỉ cho phép thay đổi status và updatedAt, bất biến các trường thông tin thí sinh
+      allow update: if isEditor()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['pending', 'contacted']
+        && (!('updatedAt' in request.resource.data) || (request.resource.data.updatedAt is string && request.resource.data.updatedAt.size() <= 40));
+
+      // Chỉ Admin trở lên mới được quyền xóa hồ sơ tuyển sinh
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 5. HỘP THƯ Ý KIẾN ĐÓNG GÓP & PHẢN ÁNH (feedback/{id})
+    // =========================================================================
+    match /feedback/{feedbackId} {
+      // BẢO VỆ RIÊNG TƯ: Người gửi không thể xem danh sách hay ý kiến của người khác
+      allow get, list: if isViewer();
+
+      // Người dân / phụ huynh gửi ý kiến trực tuyến:
+      // - Chỉ cho phép tạo mới với trạng thái ban đầu bắt buộc là 'pending'
+      // - Kiểm tra chặt chẽ độ dài và danh mục trường được phép
+      allow create: if
+        request.resource.data.keys().hasAll(['fullName', 'phone', 'message', 'submittedAt', 'status'])
+        && request.resource.data.keys().hasOnly([
+          'fullName', 'phone', 'email', 'message',
+          'submittedAt', 'status', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.fullName is string
+        && request.resource.data.fullName.size() >= 2
+        && request.resource.data.fullName.size() <= 100
+        && request.resource.data.phone is string
+        && request.resource.data.phone.size() >= 9
+        && request.resource.data.phone.size() <= 15
+        && (!('email' in request.resource.data) || (request.resource.data.email is string && request.resource.data.email.size() <= 100))
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 2
+        && request.resource.data.message.size() <= 3000
+        && request.resource.data.submittedAt is string
+        && request.resource.data.submittedAt.size() <= 35
+        && (!('createdAt' in request.resource.data) || (request.resource.data.createdAt is string && request.resource.data.createdAt.size() <= 40))
+        && (!('updatedAt' in request.resource.data) || (request.resource.data.updatedAt is string && request.resource.data.updatedAt.size() <= 40));
+
+      // Editor trở lên được cập nhật trạng thái xử lý (pending, read, resolved)
+      // Chỉ cho phép thay đổi status và updatedAt, bất biến các trường nội dung người dân gửi
+      allow update: if isEditor()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['pending', 'read', 'resolved']
+        && (!('updatedAt' in request.resource.data) || (request.resource.data.updatedAt is string && request.resource.data.updatedAt.size() <= 40));
+
+      // Chỉ Admin trở lên mới được quyền xóa ý kiến đóng góp
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 6. BẢNG PHÂN QUYỀN VAI TRÒ NGƯỜI DÙNG (userRoles/{userId})
+    // =========================================================================
+    match /userRoles/{userId} {
+      // Người dùng đã đăng nhập được đọc vai trò của chính mình để frontend hiển thị đúng chức năng,
+      // hoặc Viewer/Admin được xem danh sách phân quyền
+      allow get: if isAuthenticated() && (request.auth.uid == userId || isSuperAdmin());
+      allow list: if isSuperAdmin();
+
+      // BẢO VỆ CHỐNG TỰ NÂNG QUYỀN (Privilege Escalation):
+      // Tuyệt đối chỉ Super Admin mới được tạo, sửa hoặc xóa vai trò
+      allow create, update: if isSuperAdmin()
+        && request.resource.data.keys().hasAll(['role'])
+        && request.resource.data.keys().hasOnly(['role', 'email', 'updatedAt', 'updatedBy'])
+        && request.resource.data.role is string
+        && request.resource.data.role in ['super_admin', 'admin', 'editor', 'viewer']
+        && (!('email' in request.resource.data) || (request.resource.data.email is string && request.resource.data.email.size() <= 100))
+        && (!('updatedAt' in request.resource.data) || (request.resource.data.updatedAt is string && request.resource.data.updatedAt.size() <= 40))
+        && (!('updatedBy' in request.resource.data) || (request.resource.data.updatedBy is string && request.resource.data.updatedBy.size() <= 100));
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // =========================================================================
+    // 7. MẶC ĐỊNH TỪ CHỐI TOÀN BỘ CÁC ĐƯỜNG DẪN KHÁC (Default Deny)
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

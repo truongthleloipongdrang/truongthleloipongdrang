@@ -9,8 +9,11 @@ import {
   CheckCircle2,
   Edit,
   ShieldCheck,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
 import { SchoolInfo, EditableCardPayload } from '../types';
+import { addFeedbackSubmissionAsync } from '../feedbackStorage';
 
 interface ContactSectionProps {
   schoolInfo: SchoolInfo;
@@ -18,31 +21,49 @@ interface ContactSectionProps {
   onEditCard: (payload: EditableCardPayload) => void;
 }
 
-import { addFeedbackSubmission } from '../feedbackStorage';
-
 export const ContactSection: React.FC<ContactSectionProps> = ({
   schoolInfo,
   isAdmin,
   onEditCard,
 }) => {
   const [formSent, setFormSent] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [message, setMessage] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !phone.trim() || !message.trim()) return;
+    if (isSubmitting) return;
 
-    addFeedbackSubmission({
-      fullName: name.trim(),
-      phone: phone.trim(),
-      email: email.trim(),
-      message: message.trim(),
-    });
+    if (!name.trim() || !phone.trim() || !message.trim()) {
+      setSubmitError('Vui lòng điền đầy đủ họ và tên, số điện thoại và nội dung ý kiến.');
+      return;
+    }
 
-    setFormSent(true);
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      await addFeedbackSubmissionAsync({
+        fullName: name.trim(),
+        phone: phone.trim(),
+        email: email.trim(),
+        message: message.trim(),
+      });
+
+      setFormSent(true);
+    } catch (err: any) {
+      console.error('Lỗi gửi ý kiến:', err);
+      setSubmitError(
+        err.message ||
+          'Không thể gửi ý kiến lên hệ thống Cloud Firestore. Vui lòng kiểm tra kết nối mạng và thử lại.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -476,12 +497,29 @@ export const ContactSection: React.FC<ContactSectionProps> = ({
                 />
               </div>
 
+              {submitError && (
+                <div className="bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-xs flex items-center gap-2 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                  <span>{submitError}</span>
+                </div>
+              )}
+
               <button
                 type="submit"
-                className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-sm transition-all shadow-md flex items-center justify-center space-x-2"
+                disabled={isSubmitting}
+                className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white font-bold py-2.5 rounded-xl text-sm transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
               >
-                <Send className="w-4 h-4" />
-                <span>Gửi Ý Kiến Cho Nhà Trường</span>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Đang lưu ý kiến vào Cloud Firestore...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    <span>Gửi Ý Kiến Cho Nhà Trường</span>
+                  </>
+                )}
               </button>
             </form>
           )}

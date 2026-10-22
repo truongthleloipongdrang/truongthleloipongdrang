@@ -1,4 +1,6 @@
-import { onlineEnabled, loadOnlineContent, logoutOnline, saveOnlineContent } from './onlineStore';
+import { onlineEnabled, loadOnlineContent, logoutOnline, saveOnlineContent, isFirebaseConfigured, isOnlineAuthenticated } from './onlineStore';
+import { isTrustedPreviewEnvironment, MOCK_PREVIEW_STUDENTS, MOCK_PREVIEW_ADMISSIONS, MOCK_PREVIEW_FEEDBACK } from './authEnvironment';
+import { INITIAL_SITE_CONTENT } from './data';
 import React, { useState, useEffect } from 'react';
 import {
   NavSection,
@@ -36,11 +38,27 @@ import { Footer } from './components/Footer';
 import { EditCardModal } from './components/EditCardModal';
 import { AdminModal } from './components/AdminModal';
 import { MemberLoginModal } from './components/MemberLoginModal';
+import { AdmissionsSummaryModal } from './components/AdmissionsSummaryModal';
 import { ShieldCheck, Save, Sparkles, CheckCircle2 } from 'lucide-react';
+import {
+  getStoredRegistrations,
+  ADMISSIONS_UPDATE_EVENT,
+  initAdmissionsSync,
+} from './admissionsStorage';
+import {
+  getStoredFeedback,
+  FEEDBACK_UPDATE_EVENT,
+  NEW_FEEDBACK_NOTIFICATION_EVENT,
+  initFeedbackSync,
+} from './feedbackStorage';
 
 export default function App() {
   const [currentSection, setCurrentSection] = useState<NavSection>('home');
   const [content, setContent] = useState<SiteContent>(() => {
+    // Preview always starts from a clean mock baseline, not browser drafts.
+    if (isTrustedPreviewEnvironment()) {
+      return { ...INITIAL_SITE_CONTENT, students: [...MOCK_PREVIEW_STUDENTS] };
+    }
     const initial = loadSiteContent();
     return onlineEnabled ? { ...initial, students: [] } : initial;
   });
@@ -48,7 +66,60 @@ export default function App() {
 
   // Authentication states
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
+  const [adminInitialTab, setAdminInitialTab] = useState<
+    | 'school'
+    | 'staff'
+    | 'news'
+    | 'students'
+    | 'documents'
+    | 'members'
+    | 'admissions_registrations'
+    | 'feedback'
+    | 'password'
+    | 'sync'
+  >('school');
+
+  // Admissions new registrations notification counter & summary modal
+  const [isAdmissionsSummaryOpen, setIsAdmissionsSummaryOpen] = useState<boolean>(false);
+  const [pendingRegistrationsCount, setPendingRegistrationsCount] = useState<number>(() => {
+    if (isTrustedPreviewEnvironment()) {
+      return MOCK_PREVIEW_ADMISSIONS.filter((r) => r.status === 'pending').length;
+    }
+    return getStoredRegistrations().filter((r) => r.status === 'pending').length;
+  });
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setPendingRegistrationsCount(
+        getStoredRegistrations().filter((r) => r.status === 'pending').length
+      );
+    };
+    window.addEventListener(ADMISSIONS_UPDATE_EVENT, handleUpdate);
+    return () => window.removeEventListener(ADMISSIONS_UPDATE_EVENT, handleUpdate);
+  }, []);
+
+  // Feedback submissions notification counter & state
+  const [feedbackList, setFeedbackList] = useState(() => {
+    if (isTrustedPreviewEnvironment()) {
+      return MOCK_PREVIEW_FEEDBACK;
+    }
+    return getStoredFeedback();
+  });
+  const pendingFeedbackCount = feedbackList.filter((f) => f.status === 'pending').length;
+
+  useEffect(() => {
+    const handleFeedbackUpdate = () => {
+      setFeedbackList(getStoredFeedback());
+    };
+    window.addEventListener(FEEDBACK_UPDATE_EVENT, handleFeedbackUpdate);
+    window.addEventListener(NEW_FEEDBACK_NOTIFICATION_EVENT, handleFeedbackUpdate);
+    return () => {
+      window.removeEventListener(FEEDBACK_UPDATE_EVENT, handleFeedbackUpdate);
+      window.removeEventListener(NEW_FEEDBACK_NOTIFICATION_EVENT, handleFeedbackUpdate);
+    };
+  }, []);
 
   // Member states
   const [currentMember, setCurrentMember] = useState<MemberUser | null>(null);
@@ -63,6 +134,32 @@ export default function App() {
   // Hidden admin button toggle state (Ctrl + K)
   const [showAdminButton, setShowAdminButton] = useState<boolean>(false);
 
+  // Hàm đăng xuất thống nhất cho Quản trị viên
+  const handleAdminLogout = () => {
+    logoutOnline();
+    if (isPreviewMode) {
+      setContent({ ...INITIAL_SITE_CONTENT, students: [...MOCK_PREVIEW_STUDENTS] });
+    }
+    setIsAdmin(false);
+    setIsPreviewMode(false);
+    setShowAdminButton(false);
+    setIsAdminModalOpen(false);
+    setEditCardData(null);
+    setIsEditModalOpen(false);
+    setAdminNotice('Đã đăng xuất an toàn khỏi chế độ quản trị.');
+    setTimeout(() => setAdminNotice(null), 3000);
+  };
+
+  // Initialize admissions & feedback real-time sync with server & multi-tab
+  // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Môi trường xem trước AI Studio hoàn toàn không gọi sync hay polling với Firestore production
+  useEffect(() => {
+    if (isTrustedPreviewEnvironment()) {
+      return;
+    }
+    initAdmissionsSync();
+    initFeedbackSync();
+  }, []);
+
   // SEO update on navigation
   useEffect(() => {
     updatePageSeo(currentSection);
@@ -70,23 +167,30 @@ export default function App() {
 
   // Public visitors always read the live Firestore document when configured.
   // Local drafts can never override published data for anonymous users.
+  // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Tuyệt đối không đọc Firestore production trong môi trường xem trước AI Studio
   useEffect(() => {
+    if (isTrustedPreviewEnvironment()) {
+      return;
+    }
     let active = true;
-    (onlineEnabled ? loadOnlineContent() : fetchRemoteSiteContent()).then((remoteData) => {
-      if (!active || !remoteData?.schoolInfo?.stats) return;
-      const remoteSchoolInfo = remoteData.schoolInfo;
-      if (!onlineEnabled && !confirmRemotePublished(remoteData as SiteContent)) {
+    (isFirebaseConfigured() ? loadOnlineContent() : fetchRemoteSiteContent()).then((remoteData) => {
+      if (!active || !remoteData || !remoteData.schoolInfo) return;
+      if (!isFirebaseConfigured() && !confirmRemotePublished(remoteData as SiteContent)) {
         // Local admin edits have not yet reached the deployed public JSON.
         return;
       }
+      const remoteSchoolInfo = remoteData.schoolInfo;
       setContent((prev) => ({
         ...prev,
         ...remoteData,
         students: onlineEnabled ? [] : prev.students,
         schoolInfo: {
           ...prev.schoolInfo,
-          ...remoteData.schoolInfo,
-          stats: { ...prev.schoolInfo.stats, ...remoteSchoolInfo.stats },
+          ...remoteSchoolInfo,
+          stats: {
+            ...prev.schoolInfo.stats,
+            ...(remoteSchoolInfo.stats || {}),
+          },
         },
       }));
     }).catch((error) => console.error('Không tải được dữ liệu trực tuyến:', error));
@@ -612,13 +716,16 @@ export default function App() {
     }
 
     setContent(nextContent);
-    if (!onlineEnabled) saveSiteContentLocal(nextContent);
-    if (onlineEnabled) {
+    if (isPreviewMode) {
+      // Chế độ preview AI Studio: CHỈ thay đổi React state trong bộ nhớ, KHÔNG ghi localStorage hoặc Firestore production
+      setAdminNotice(`[Xem trước AI Studio]: Đã cập nhật thẻ "${updatedCard.title}" trong bộ nhớ tạm (không ghi localStorage / Firestore).`);
+    } else if (onlineEnabled && isOnlineAuthenticated()) {
       setAdminNotice('Đang lưu nội dung lên Firebase...');
       void saveOnlineContent(nextContent)
         .then(() => setAdminNotice('Đã lưu nội dung công khai lên Firebase.'))
         .catch((e) => setAdminNotice(`CHƯA lưu lên Firebase: ${e.message}`));
     } else {
+      saveSiteContentLocal(nextContent);
       setAdminNotice(`Đã cập nhật thẻ: "${updatedCard.title}" trên trình duyệt.`);
     }
     setTimeout(() => setAdminNotice(null), 3500);
@@ -631,14 +738,18 @@ export default function App() {
     );
     const next = { ...content, documents: updatedDocs };
     setContent(next);
-    saveSiteContentLocal(next);
+    if (!isPreviewMode) {
+      saveSiteContentLocal(next);
+    }
   };
 
   // Member uploads a new document
   const handleMemberUploadDoc = (newDoc: DocumentItem) => {
     const next = { ...content, documents: [newDoc, ...content.documents] };
     setContent(next);
-    saveSiteContentLocal(next);
+    if (!isPreviewMode) {
+      saveSiteContentLocal(next);
+    }
   };
 
   // Member login success
@@ -653,24 +764,69 @@ export default function App() {
       {isAdmin && (
         <aside
           aria-label="Thanh quản trị đang hoạt động"
-          className="sticky top-0 z-50 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-500 text-slate-950 px-4 py-2 text-xs font-bold shadow-md flex items-center justify-between"
+          className={`sticky top-0 z-50 text-slate-950 px-4 py-2 text-xs font-bold shadow-md flex items-center justify-between ${
+            isPreviewMode
+              ? 'bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 border-b border-amber-500'
+              : 'bg-gradient-to-r from-amber-500 via-amber-600 to-amber-500'
+          }`}
         >
           <div className="flex items-center space-x-2">
             <ShieldCheck className="w-4 h-4 text-slate-950" />
             <span>
-              CHẾ ĐỘ QUẢN TRỊ ĐANG BẬT: Bạn có thể sửa trực tiếp bất kỳ thẻ nào trên trang bằng nút <strong>✏️ Sửa thẻ này</strong>.
+              {isPreviewMode ? (
+                <>
+                  <span className="bg-slate-950 text-amber-300 px-1.5 py-0.5 rounded text-[10px] uppercase font-black mr-1">
+                    Xem trước AI Studio
+                  </span>
+                  Bạn đang ở chế độ xem trước nội bộ với dữ liệu mẫu. Không kết nối Cloud Firestore Production. Bấm <strong>✏️ Sửa thẻ này</strong> để thử nghiệm giao diện.
+                </>
+              ) : (
+                <>
+                  <span className="bg-emerald-950 text-emerald-300 px-1.5 py-0.5 rounded text-[10px] uppercase font-black mr-1">
+                    Firebase Admin
+                  </span>
+                  CHẾ ĐỘ QUẢN TRỊ FIREBASE ĐANG BẬT: Bạn có thể sửa trực tiếp bất kỳ thẻ nào trên trang bằng nút <strong>✏️ Sửa thẻ này</strong>.
+                </>
+              )}
             </span>
           </div>
           <div className="flex items-center space-x-2">
+            {pendingRegistrationsCount > 0 && (
+              <button
+                onClick={() => {
+                  setAdminInitialTab('admissions_registrations');
+                  setIsAdminModalOpen(true);
+                }}
+                className="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded-lg text-xs font-black animate-pulse flex items-center space-x-1 cursor-pointer shadow-sm"
+                title="Bấm để xem danh sách phụ huynh đăng ký tuyển sinh mới"
+              >
+                <span>🔔 Có {pendingRegistrationsCount} đăng ký mới!</span>
+              </button>
+            )}
+            {pendingFeedbackCount > 0 && (
+              <button
+                onClick={() => {
+                  setAdminInitialTab('feedback');
+                  setIsAdminModalOpen(true);
+                }}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-2.5 py-1 rounded-lg text-xs font-black animate-pulse flex items-center space-x-1 cursor-pointer shadow-sm"
+                title="Bấm để xem các ý kiến đóng góp & trao đổi mới từ phụ huynh"
+              >
+                <span>💬 Có {pendingFeedbackCount} ý kiến trao đổi mới!</span>
+              </button>
+            )}
             <button
-              onClick={() => setIsAdminModalOpen(true)}
-              className="bg-slate-950 text-white hover:bg-slate-800 px-3 py-1 rounded-lg text-xs"
+              onClick={() => {
+                setAdminInitialTab('school');
+                setIsAdminModalOpen(true);
+              }}
+              className="bg-slate-950 text-white hover:bg-slate-800 px-3 py-1 rounded-lg text-xs cursor-pointer"
             >
               Bảng Điều Khiển
             </button>
             <button
-              onClick={() => setIsAdmin(false)}
-              className="bg-amber-700/30 hover:bg-amber-700/50 text-slate-950 px-2 py-1 rounded-lg text-xs"
+              onClick={handleAdminLogout}
+              className="bg-amber-700/30 hover:bg-amber-700/50 text-slate-950 px-2 py-1 rounded-lg text-xs cursor-pointer"
             >
               Thoát
             </button>
@@ -694,13 +850,19 @@ export default function App() {
         isAdmin={isAdmin}
         showAdminButton={showAdminButton}
         onOpenAdmin={() => setIsAdminModalOpen(true)}
-        onAdminLogout={() => {
-          setIsAdmin(false);
-          setShowAdminButton(false);
+        onOpenAdminAdmissions={() => {
+          setAdminInitialTab('admissions_registrations');
+          setIsAdminModalOpen(true);
         }}
+        onOpenAdminFeedback={() => {
+          setAdminInitialTab('feedback');
+          setIsAdminModalOpen(true);
+        }}
+        onAdminLogout={handleAdminLogout}
         currentMember={currentMember}
         onOpenMemberLogin={() => setIsMemberModalOpen(true)}
         onMemberLogout={() => setCurrentMember(null)}
+        onOpenAdmissionsSummary={() => setIsAdmissionsSummaryOpen(true)}
       />
 
       {/* Hero Banner (Always on Home) */}
@@ -779,8 +941,14 @@ export default function App() {
             onUpdateStudents={(newStudents) => {
               const next = { ...content, students: newStudents };
               setContent(next);
-              saveSiteContentLocal(next);
-              setAdminNotice('Danh sách mới chỉ được sửa trên màn hình. Hãy vào quản trị và lưu riêng dữ liệu học sinh để cập nhật Firebase.');
+              if (!isPreviewMode) {
+                saveSiteContentLocal(next);
+              }
+              setAdminNotice(
+                isPreviewMode
+                  ? '[Xem trước AI Studio]: Đã cập nhật danh sách học sinh trong bộ nhớ tạm.'
+                  : 'Danh sách mới chỉ được sửa trên màn hình. Hãy vào quản trị và lưu riêng dữ liệu học sinh để cập nhật Firebase.'
+              );
               setTimeout(() => setAdminNotice(null), 3500);
             }}
           />
@@ -837,18 +1005,25 @@ export default function App() {
         isOpen={isAdminModalOpen}
         onClose={() => setIsAdminModalOpen(false)}
         isAdmin={isAdmin}
-        onLoginSuccess={() => setIsAdmin(true)}
-        onLogout={() => { logoutOnline(); setIsAdmin(false); }}
+        onLoginSuccess={(isPreview = false) => {
+          setIsAdmin(true);
+          setIsPreviewMode(isPreview);
+        }}
+        onLogout={handleAdminLogout}
         content={content}
         onSaveContent={(newContent, published = false) => {
-          if (!onlineEnabled) saveSiteContentLocal(newContent, !published);
+          if (!isPreviewMode && !onlineEnabled) saveSiteContentLocal(newContent, !published);
           setContent(newContent);
         }}
         onResetContent={() => {
-          const def = resetSiteContentToDefault();
+          // A preview reset must never touch persisted production/local drafts.
+          const def = isPreviewMode
+            ? { ...INITIAL_SITE_CONTENT, students: [...MOCK_PREVIEW_STUDENTS] }
+            : resetSiteContentToDefault();
           setContent(def);
         }}
         memberLogList={memberLogList}
+        initialTab={adminInitialTab}
       />
 
       {/* Member Login Modal */}
@@ -856,6 +1031,13 @@ export default function App() {
         isOpen={isMemberModalOpen}
         onClose={() => setIsMemberModalOpen(false)}
         onLoginSuccess={handleMemberLoginSuccess}
+      />
+
+      {/* Admissions Consolidated Summary Modal */}
+      <AdmissionsSummaryModal
+        isOpen={isAdmissionsSummaryOpen}
+        onClose={() => setIsAdmissionsSummaryOpen(false)}
+        isAdmin={isAdmin}
       />
     </div>
   );

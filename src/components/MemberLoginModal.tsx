@@ -13,12 +13,12 @@ export const MemberLoginModal: React.FC<MemberLoginModalProps> = ({
   onClose,
   onLoginSuccess,
 }) => {
-  if (!isOpen) return null;
-
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState<'Giáo viên' | 'Phụ huynh' | 'Học sinh' | 'Cán bộ'>('Phụ huynh');
   const [error, setError] = useState('');
+
+  if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

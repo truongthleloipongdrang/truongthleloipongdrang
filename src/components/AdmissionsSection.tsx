@@ -19,11 +19,16 @@ import {
   X,
   ClipboardList,
   Search,
+  RefreshCw,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
 import { AdmissionsData, EditableCardPayload, AdmissionRegistration } from '../types';
 import {
   getStoredRegistrations,
   addAdmissionRegistration,
+  addAdmissionRegistrationAsync,
+  syncAdmissionsWithFirestore,
   updateRegistrationStatus,
   deleteRegistration,
   clearAllRegistrations,
@@ -45,6 +50,9 @@ export const AdmissionsSection: React.FC<AdmissionsSectionProps> = ({
   onEditCard,
 }) => {
   const [formSubmitted, setFormSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [syncingFirestore, setSyncingFirestore] = useState(false);
   const [lastSubmittedRecord, setLastSubmittedRecord] = useState<AdmissionRegistration | null>(null);
   const [registrations, setRegistrations] = useState<AdmissionRegistration[]>(() =>
     getStoredRegistrations()
@@ -56,15 +64,16 @@ export const AdmissionsSection: React.FC<AdmissionsSectionProps> = ({
   const [confirmClearAllTop, setConfirmClearAllTop] = useState(false);
   const [confirmClearAllModal, setConfirmClearAllModal] = useState(false);
 
-  const handleDeleteRecord = (id: string) => {
-    deleteRegistration(id);
+  const handleDeleteRecord = async (id: string) => {
+    try {
+      await deleteRegistration(id);
     setRegistrations((prev) => prev.filter((r) => r.id !== id));
     setConfirmDeleteId(null);
+    } catch (err) { window.alert("Không xóa được hồ sơ trên Firebase: " + String(err)); }
   };
 
   const handleClearAllRecords = () => {
-    clearAllRegistrations();
-    setRegistrations([]);
+    window.alert('Để bảo vệ hồ sơ thực, chức năng Xóa tất cả đã tạm khóa trong bản kiểm thử. Vui lòng xử lý từng hồ sơ trên Firestore.');
     setConfirmClearAllTop(false);
     setConfirmClearAllModal(false);
   };
@@ -88,19 +97,39 @@ export const AdmissionsSection: React.FC<AdmissionsSectionProps> = ({
 
   const pendingCount = registrations.filter((r) => r.status === 'pending').length;
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newReg = addAdmissionRegistration({
-      parentName: formData.parentName,
-      phone: formData.phone,
-      childName: formData.childName,
-      birthYear: formData.birthYear,
-      campusChoice: formData.campusChoice,
-      note: formData.note,
-    });
-    setLastSubmittedRecord(newReg);
-    setFormSubmitted(true);
-    setRegistrations(getStoredRegistrations());
+    if (isSubmitting) return;
+
+    if (!formData.parentName.trim() || !formData.phone.trim() || !formData.childName.trim()) {
+      setSubmitError('Vui lòng điền đầy đủ họ tên phụ huynh, số điện thoại và họ tên học sinh.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const newReg = await addAdmissionRegistrationAsync({
+        parentName: formData.parentName,
+        phone: formData.phone,
+        childName: formData.childName,
+        birthYear: formData.birthYear,
+        campusChoice: formData.campusChoice,
+        note: formData.note,
+      });
+      setLastSubmittedRecord(newReg);
+      setFormSubmitted(true);
+      setRegistrations(getStoredRegistrations());
+    } catch (err: any) {
+      console.error('Lỗi gửi hồ sơ tuyển sinh:', err);
+      setSubmitError(
+        err.message ||
+          'Không thể kết nối máy chủ Cloud Firestore để gửi hồ sơ. Vui lòng kiểm tra kết nối mạng và thử lại.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const filteredRegistrations = registrations.filter((r) => {
@@ -625,12 +654,29 @@ export const AdmissionsSection: React.FC<AdmissionsSectionProps> = ({
                 />
               </div>
 
+              {submitError && (
+                <div className="bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-xs flex items-center gap-2 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                  <span>{submitError}</span>
+                </div>
+              )}
+
               <button
                 type="submit"
-                className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-sm transition-all shadow-md hover:shadow-lg flex items-center justify-center space-x-2"
+                disabled={isSubmitting}
+                className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white font-bold py-3 rounded-xl text-sm transition-all shadow-md hover:shadow-lg flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
               >
-                <Send className="w-4 h-4" />
-                <span>Gửi Đăng Ký Tư Vấn Tuyển Sinh</span>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Đang lưu hồ sơ vào Cloud Firestore...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    <span>Gửi Đăng Ký Tư Vấn Tuyển Sinh</span>
+                  </>
+                )}
               </button>
             </form>
           )}
@@ -695,6 +741,23 @@ export const AdmissionsSection: React.FC<AdmissionsSectionProps> = ({
                   <FileText className="w-4 h-4" />
                   <span>Xuất CSV</span>
                 </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    disabled={syncingFirestore}
+                    onClick={async () => {
+                      setSyncingFirestore(true);
+                      await syncAdmissionsWithFirestore(false);
+                      setRegistrations(getStoredRegistrations());
+                      setSyncingFirestore(false);
+                    }}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 py-2 rounded-xl text-xs flex items-center gap-1 transition-all cursor-pointer"
+                    title="Đồng bộ hồ sơ trực tiếp từ Cloud Firestore"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${syncingFirestore ? 'animate-spin text-emerald-600' : ''}`} />
+                    <span>{syncingFirestore ? 'Đang đồng bộ...' : 'Đồng bộ Firestore'}</span>
+                  </button>
+                )}
 
                 {isAdmin && (
                   confirmClearAllModal ? (
@@ -808,7 +871,7 @@ export const AdmissionsSection: React.FC<AdmissionsSectionProps> = ({
                                 updateRegistrationStatus(
                                   reg.id,
                                   reg.status === 'contacted' ? 'pending' : 'contacted'
-                                )
+                                ).catch((err) => window.alert('Không cập nhật được hồ sơ trên Firebase: ' + (err instanceof Error ? err.message : String(err))))
                               }
                               className={`px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
                                 reg.status === 'contacted'

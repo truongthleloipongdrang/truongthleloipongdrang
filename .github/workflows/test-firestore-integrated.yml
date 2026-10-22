@@ -1,0 +1,49 @@
+
+name: Test Firestore Integrated Safely
+
+on:
+  push:
+    branches:
+      - test/website-integrated-safe
+    
+    paths:
+      - '.github/workflows/test-firestore-integrated.yml'
+      - 'tests/**'
+      - 'src/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test-rules:
+    name: Firestore Security Rules Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: tests/rules-runner
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install test dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Verify Firestore rules files match
+        run: cmp firestore.rules ../firestore.rules
+
+      - name: Run Firestore Emulator tests
+        run: npx firebase-tools emulators:exec --only firestore --project demo-school-rules "npm test"
