@@ -15,19 +15,48 @@ import type { StudentRecord, AdmissionRegistration, FeedbackSubmission } from '.
  */
 
 export function isTrustedPreviewEnvironment(): boolean {
-  // A production bundle may never activate the local-password preview path,
-  // irrespective of the domain on which that bundle is hosted.
-  if (typeof __IS_PRODUCTION_BUILD__ !== 'undefined' && __IS_PRODUCTION_BUILD__) return false;
-  if (import.meta.env.PROD || !import.meta.env.DEV) return false;
-  if (typeof window === 'undefined') return false;
+  // 1. Cấu hình Build an toàn (Build Configuration Control - Tiêu chuẩn tiên quyết):
+  // Nếu bundle được biên dịch cho GitHub Pages hoặc cấu hình build cấm preview:
+  // Rollup/Vite sẽ loại bỏ hoàn toàn chế độ preview qua dead-code elimination.
+  if (typeof __IS_GITHUB_PAGES_BUILD__ !== 'undefined' && __IS_GITHUB_PAGES_BUILD__ === true) {
+    return false;
+  }
 
-  // Hostname is a *supplemental* development UX condition, NOT authentication.
-  // Only a Vite DEV server may expose the mock preview experience.
-  const hostname = window.location.hostname.toLowerCase();
-  if (hostname === 'github.io' || hostname.endsWith('.github.io')) return false;
-  const local = ['localhost', '127.0.0.1', '0.0.0.0'].includes(hostname);
-  const aiStudioDev = hostname.endsWith('.run.app');
-  return local || aiStudioDev;
+  if (typeof __ALLOW_PREVIEW_MODE__ !== 'undefined' && __ALLOW_PREVIEW_MODE__ === false) {
+    return false;
+  }
+
+  if (import.meta.env?.VITE_DISABLE_PREVIEW === 'true') {
+    return false;
+  }
+
+  // 2. Kiểm tra môi trường trình duyệt
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  // 3. Kiểm tra Tên miền an toàn (Hostname Validation - Defense in depth):
+  // Website chính thức (GitHub Pages *.github.io hoặc tên miền chính thức của trường): TỪ CHỐI TUYỆT ĐỐI!
+  const hostname = (window.location.hostname || '').toLowerCase();
+  if (
+    hostname.endsWith('.github.io') ||
+    hostname === 'github.io' ||
+    (hostname.includes('leloi') && !hostname.includes('run.app'))
+  ) {
+    return false;
+  }
+
+  // 4. Chỉ chấp nhận các môi trường xem trước hợp lệ (Google AI Studio container hoặc localhost):
+  const isAiStudioPreviewHost = hostname.endsWith('.run.app');
+  const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0';
+
+  if (isAiStudioPreviewHost || isLocalHost) {
+    // Phải đồng thời được cấu hình build cho phép xem trước
+    return typeof __ALLOW_PREVIEW_MODE__ === 'undefined' || __ALLOW_PREVIEW_MODE__ === true;
+  }
+
+  // 5. Mặc định từ chối tuyệt đối cho tất cả trường hợp còn lại
+  return false;
 }
 
 export function isProductionWebsite(): boolean {
