@@ -39,7 +39,7 @@ const SECTION_SEO_TITLES: Record<NavSection, { title: string; desc: string }> = 
   },
   contact: {
     title: 'Liên Hệ & Địa Chỉ Trường Tiểu Học Lê Lợi | Pơng Drang, Đắk Lắk',
-    desc: 'Thông tin liên hệ Trường Tiểu học Lê Lợi: Xã Pơng Drang, Tỉnh Đắk Lắk. Hotline: 0944823366 - Email: truongthleloipongdrang@gmail.com.',
+    desc: 'Thông tin liên hệ Trường Tiểu học Lê Lợi: Xã Pơng Drang, Tỉnh Đắk Lắk. Hotline: 02623600344 - Email: truongthleloipongdrang@gmail.com.',
   },
 };
 

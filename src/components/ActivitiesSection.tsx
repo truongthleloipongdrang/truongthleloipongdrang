@@ -9,6 +9,7 @@ import {
   Calendar,
   Edit,
   Filter,
+  Trophy,
 } from 'lucide-react';
 import { ActivityItem, EditableCardPayload } from '../types';
 
@@ -16,21 +17,25 @@ interface ActivitiesSectionProps {
   activities: ActivityItem[];
   isAdmin: boolean;
   onEditCard: (payload: EditableCardPayload) => void;
+  onToggleHighlightActivity?: (actId: string) => void;
 }
 
 export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
   activities,
   isAdmin,
   onEditCard,
+  onToggleHighlightActivity,
 }) => {
   const [filterCategory, setFilterCategory] = useState<string>('all');
 
   const categories = [
     { id: 'all', label: 'Tất Cả' },
     { id: 'day-hoc', label: 'Dạy Học & STEM', icon: BookOpen },
-    { id: 'ngoai-khoa', label: 'Ngoại Khóa & Cồng Chiêng', icon: Music },
-    { id: 'doi-tntp', label: 'Công Tác Đội', icon: Flag },
-    { id: 'trai-nghiem', label: 'Trải Nghiệm', icon: Compass },
+    { id: 'ngoai-khoa', label: 'Ngoại khoá', icon: Compass },
+    { id: 'doi-tntp', label: 'Phong trào Đội', icon: Flag },
+    { id: 'van-nghe', label: 'Văn nghệ', icon: Music },
+    { id: 'the-thao', label: 'Thể thao', icon: Trophy },
+    { id: 'trai-nghiem', label: 'Trải Nghiệm', icon: Sparkles },
     { id: 'chuyen-doi-so', label: 'Chuyển Đổi Số', icon: Monitor },
   ];
 
@@ -81,27 +86,52 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
         {filtered.map((act) => (
           <div
             key={act.id}
-            className="relative group bg-white border border-slate-200 hover:border-emerald-500 rounded-3xl overflow-hidden shadow-xs hover:shadow-xl transition-all flex flex-col justify-between"
+            className={`relative group bg-white border rounded-3xl overflow-hidden shadow-xs hover:shadow-xl transition-all flex flex-col justify-between ${
+              act.highlight
+                ? 'border-amber-400 ring-2 ring-amber-300/50'
+                : 'border-slate-200 hover:border-emerald-500'
+            }`}
           >
             {isAdmin && (
-              <button
-                onClick={() =>
-                  onEditCard({
-                    sectionKey: 'activities',
-                    itemId: act.id,
-                    title: act.title,
-                    subtitle: act.categoryLabel,
-                    content: act.description,
-                    imageUrl: act.imageUrl,
-                    category: act.category,
-                    extraField1Label: 'Lịch hoạt động',
-                    extraField1Value: act.date,
-                  })
-                }
-                className="absolute top-3 right-3 z-10 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-2.5 py-1 rounded-full text-[10px] shadow"
-              >
-                Sửa thẻ này
-              </button>
+              <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
+                <button
+                  onClick={() => onToggleHighlightActivity?.(act.id)}
+                  className={`font-black px-2.5 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1 transition-all ${
+                    act.highlight
+                      ? 'bg-amber-400 text-slate-950 ring-1 ring-amber-200'
+                      : 'bg-white/95 text-slate-800 hover:bg-emerald-50'
+                  }`}
+                  title={
+                    act.highlight
+                      ? 'Hủy nổi bật hoạt động trên Trang Chủ'
+                      : 'Làm nổi bật hoạt động trên Trang Chủ'
+                  }
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>{act.highlight ? 'Đang nổi bật' : 'Nổi bật'}</span>
+                </button>
+
+                <button
+                  onClick={() =>
+                    onEditCard({
+                      sectionKey: 'activities',
+                      itemId: act.id,
+                      title: act.title,
+                      subtitle: act.categoryLabel,
+                      content: act.description,
+                      imageUrl: act.imageUrl,
+                      category: act.category,
+                      highlight: act.highlight,
+                      extraField1Label: 'Lịch hoạt động',
+                      extraField1Value: act.date,
+                    })
+                  }
+                  className="bg-slate-900 hover:bg-black text-white font-bold px-2.5 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1"
+                >
+                  <Edit className="w-3 h-3" />
+                  <span>Sửa</span>
+                </button>
+              </div>
             )}
 
             <div>
@@ -111,6 +141,12 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
                   alt={act.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
+                {act.highlight && (
+                  <span className="absolute top-3 left-3 bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-[10px] px-2.5 py-0.5 rounded-full shadow-md flex items-center gap-1 z-10">
+                    <Sparkles className="w-3 h-3" />
+                    <span>TIÊU ĐIỂM TRANG CHỦ</span>
+                  </span>
+                )}
                 <span className="absolute bottom-2.5 left-2.5 bg-emerald-900/90 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md backdrop-blur-xs">
                   {act.categoryLabel}
                 </span>

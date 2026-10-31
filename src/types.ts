@@ -113,7 +113,15 @@ export interface NewsItem {
 export interface ActivityItem {
   id: string;
   title: string;
-  category: 'day-hoc' | 'ngoai-khoa' | 'doi-tntp' | 'trai-nghiem' | 'chuyen-doi-so';
+  category:
+    | 'day-hoc'
+    | 'ngoai-khoa'
+    | 'doi-tntp'
+    | 'van-nghe'
+    | 'the-thao'
+    | 'trai-nghiem'
+    | 'chuyen-doi-so'
+    | string;
   categoryLabel: string;
   date: string;
   description: string;
@@ -281,6 +289,8 @@ export interface EditableCardPayload {
   imageUrl?: string;
   imageCaption?: string;
   category?: string;
+  isFeatured?: boolean;
+  highlight?: boolean;
   extraField1Label?: string;
   extraField1Value?: string;
   extraField2Label?: string;

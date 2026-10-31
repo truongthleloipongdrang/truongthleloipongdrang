@@ -10,6 +10,7 @@ import {
   X,
   Share2,
   Clock,
+  Star,
 } from 'lucide-react';
 import { NewsItem, EditableCardPayload } from '../types';
 
@@ -19,6 +20,7 @@ interface NewsSectionProps {
   onEditCard: (payload: EditableCardPayload) => void;
   selectedNews: NewsItem | null;
   onSelectNews: (news: NewsItem | null) => void;
+  onToggleFeatureNews?: (newsId: string) => void;
 }
 
 export const NewsSection: React.FC<NewsSectionProps> = ({
@@ -27,6 +29,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
   onEditCard,
   selectedNews,
   onSelectNews,
+  onToggleFeatureNews,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -35,8 +38,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
     { id: 'all', label: 'Tất Cả' },
     { id: 'thong-bao', label: 'Thông Báo' },
     { id: 'tin-tuc', label: 'Tin Tức' },
-    { id: 'hoat-dong', label: 'Hoạt Động' },
-    { id: 'chuyen-doi-so', label: 'Chuyển Đổi Số' },
+    { id: 'hoat-dong', label: 'Sự Kiện' },
   ];
 
   const filteredNews = newsList.filter((item) => {
@@ -44,7 +46,9 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
       item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.summary.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory =
-      selectedCategory === 'all' || item.category === selectedCategory;
+      selectedCategory === 'all' ||
+      item.category === selectedCategory ||
+      (selectedCategory === 'tin-tuc' && item.category === 'chuyen-doi-so');
     return matchesSearch && matchesCategory;
   });
 
@@ -98,26 +102,57 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
       {featured && selectedCategory === 'all' && !searchTerm && (
         <div className="relative group bg-white border border-slate-200 hover:border-emerald-500 rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all">
           {isAdmin && (
-            <button
-              onClick={() =>
-                onEditCard({
-                  sectionKey: 'news',
-                  itemId: featured.id,
-                  title: featured.title,
-                  subtitle: featured.categoryLabel,
-                  content: featured.content,
-                  imageUrl: featured.imageUrl,
-                  category: featured.category,
-                  extraField1Label: 'Ngày đăng',
-                  extraField1Value: featured.date,
-                  extraField2Label: 'Tác giả',
-                  extraField2Value: featured.author,
-                })
-              }
-              className="absolute top-4 right-4 z-20 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-2.5 py-1 rounded-full text-[10px] shadow"
-            >
-              Sửa tin nổi bật này
-            </button>
+            <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+              <button
+                onClick={() => onToggleFeatureNews?.(featured.id)}
+                className={`font-black px-3 py-1 rounded-full text-[11px] shadow-md flex items-center space-x-1.5 transition-all ${
+                  featured.isFeatured
+                    ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 ring-2 ring-amber-300'
+                    : 'bg-white/95 hover:bg-slate-100 text-slate-700 border border-slate-300'
+                }`}
+                title={
+                  featured.isFeatured
+                    ? 'Bỏ ghim bài này khỏi Trang Chủ'
+                    : 'Ghim bài này lên Trang Chủ'
+                }
+              >
+                <Star
+                  className={`w-3.5 h-3.5 ${
+                    featured.isFeatured
+                      ? 'fill-slate-950 text-slate-950'
+                      : 'text-slate-400'
+                  }`}
+                />
+                <span>
+                  {featured.isFeatured
+                    ? '★ Đang Ghim Trang Chủ'
+                    : '☆ Ghim Trang Chủ'}
+                </span>
+              </button>
+
+              <button
+                onClick={() =>
+                  onEditCard({
+                    sectionKey: 'news',
+                    itemId: featured.id,
+                    title: featured.title,
+                    subtitle: featured.categoryLabel,
+                    content: featured.content,
+                    imageUrl: featured.imageUrl,
+                    category: featured.category,
+                    isFeatured: featured.isFeatured,
+                    extraField1Label: 'Ngày đăng',
+                    extraField1Value: featured.date,
+                    extraField2Label: 'Tác giả',
+                    extraField2Value: featured.author,
+                  })
+                }
+                className="bg-slate-900 hover:bg-black text-white font-bold px-3 py-1 rounded-full text-[11px] shadow-md flex items-center space-x-1"
+              >
+                <Edit className="w-3.5 h-3.5" />
+                <span>Sửa tin nổi bật này</span>
+              </button>
+            </div>
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-0">
@@ -169,29 +204,60 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
         {filteredNews.map((news) => (
           <div
             key={news.id}
-            className="relative group bg-white border border-slate-200 hover:border-emerald-400 rounded-2xl overflow-hidden shadow-xs hover:shadow-lg transition-all flex flex-col justify-between"
+            className={`relative group bg-white border rounded-2xl overflow-hidden shadow-xs hover:shadow-lg transition-all flex flex-col justify-between ${
+              news.isFeatured
+                ? 'border-amber-400 ring-2 ring-amber-200/60'
+                : 'border-slate-200 hover:border-emerald-400'
+            }`}
           >
             {isAdmin && (
-              <button
-                onClick={() =>
-                  onEditCard({
-                    sectionKey: 'news',
-                    itemId: news.id,
-                    title: news.title,
-                    subtitle: news.categoryLabel,
-                    content: news.content,
-                    imageUrl: news.imageUrl,
-                    category: news.category,
-                    extraField1Label: 'Ngày đăng',
-                    extraField1Value: news.date,
-                    extraField2Label: 'Tác giả',
-                    extraField2Value: news.author,
-                  })
-                }
-                className="absolute top-2.5 right-2.5 z-10 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-2 py-0.5 rounded-full text-[10px] shadow"
-              >
-                Sửa thẻ này
-              </button>
+              <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5">
+                <button
+                  onClick={() => onToggleFeatureNews?.(news.id)}
+                  className={`font-black px-2.5 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1 transition-all ${
+                    news.isFeatured
+                      ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 ring-1 ring-amber-300'
+                      : 'bg-white/95 hover:bg-slate-100 text-slate-700 border border-slate-300'
+                  }`}
+                  title={
+                    news.isFeatured
+                      ? 'Bỏ ghim khỏi Trang Chủ'
+                      : 'Ghim nổi bật lên Trang Chủ'
+                  }
+                >
+                  <Star
+                    className={`w-3 h-3 ${
+                      news.isFeatured
+                        ? 'fill-slate-950 text-slate-950'
+                        : 'text-slate-400'
+                    }`}
+                  />
+                  <span>{news.isFeatured ? 'Đang ghim' : 'Ghim'}</span>
+                </button>
+
+                <button
+                  onClick={() =>
+                    onEditCard({
+                      sectionKey: 'news',
+                      itemId: news.id,
+                      title: news.title,
+                      subtitle: news.categoryLabel,
+                      content: news.content,
+                      imageUrl: news.imageUrl,
+                      category: news.category,
+                      isFeatured: news.isFeatured,
+                      extraField1Label: 'Ngày đăng',
+                      extraField1Value: news.date,
+                      extraField2Label: 'Tác giả',
+                      extraField2Value: news.author,
+                    })
+                  }
+                  className="bg-slate-900 hover:bg-black text-white font-bold px-2 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1"
+                >
+                  <Edit className="w-3 h-3" />
+                  <span>Sửa</span>
+                </button>
+              </div>
             )}
 
             <div>
@@ -201,6 +267,12 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                   alt={news.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
+                {news.isFeatured && (
+                  <span className="absolute top-2.5 left-2.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-black text-[10px] px-2.5 py-0.5 rounded-full shadow-md flex items-center gap-1 z-10">
+                    <Star className="w-3 h-3 fill-slate-950" />
+                    <span>GHIM TRANG CHỦ</span>
+                  </span>
+                )}
                 <span className="absolute bottom-2 left-2 bg-emerald-900/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded backdrop-blur-xs">
                   {news.categoryLabel}
                 </span>
