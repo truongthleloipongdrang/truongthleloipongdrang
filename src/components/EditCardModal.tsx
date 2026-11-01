@@ -8,6 +8,7 @@ import {
   Eye,
   RefreshCw,
   Info,
+  Star,
 } from 'lucide-react';
 import { EditableCardPayload } from '../types';
 import { generateTeacherBioWithAI } from '../geminiConfig';
@@ -152,6 +153,79 @@ export const EditCardModal: React.FC<EditCardModalProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Feature / Highlight on Home Page Toggle */}
+          {form.sectionKey === 'news' && (
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl p-4 shadow-2xs">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="p-1 bg-amber-500 text-slate-950 rounded-lg text-xs font-bold">
+                      <Star className="w-3.5 h-3.5 fill-slate-950" />
+                    </span>
+                    <span className="text-sm font-black text-amber-950 uppercase tracking-wide">
+                      Ghim Nổi Bật Lên Trang Chủ
+                    </span>
+                    {form.isFeatured && (
+                      <span className="bg-amber-500 text-slate-950 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                        Đang Bật
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-amber-900/90 leading-relaxed">
+                    Khi bật, bài đăng này sẽ xuất hiện tại vị trí <strong>Tiêu Điểm Đặc Biệt</strong> ngay đầu Trang Chủ và được ưu tiên xếp đầu danh sách để phụ huynh, học sinh và thầy cô dễ nhìn, dễ biết nhất.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.isFeatured)}
+                    onChange={(e) =>
+                      setForm({ ...form, isFeatured: e.target.checked })
+                    }
+                    className="sr-only peer"
+                  />
+                  <div className="w-12 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {form.sectionKey === 'activities' && (
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-300 rounded-2xl p-4 shadow-2xs">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="p-1 bg-emerald-600 text-white rounded-lg text-xs font-bold">
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </span>
+                    <span className="text-sm font-black text-emerald-950 uppercase tracking-wide">
+                      Làm Nổi Bật Hoạt Động Lên Trang Chủ
+                    </span>
+                    {form.highlight && (
+                      <span className="bg-emerald-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                        Đang Nổi Bật
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-emerald-900/90 leading-relaxed">
+                    Hoạt động này sẽ được ưu tiên hiển thị nổi bật trong khối "Hoạt Động Giáo Dục & Trải Nghiệm" tại Trang Chủ.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.highlight)}
+                    onChange={(e) =>
+                      setForm({ ...form, highlight: e.target.checked })
+                    }
+                    className="sr-only peer"
+                  />
+                  <div className="w-12 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
+            </div>
+          )}
 
           {/* Title Field */}
           <div>

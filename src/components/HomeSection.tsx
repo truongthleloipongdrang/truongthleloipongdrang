@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Bell,
   Newspaper,
@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Award,
   Edit,
+  Star,
 } from 'lucide-react';
 import { SiteContent, EditableCardPayload, NavSection, NewsItem } from '../types';
 
@@ -19,6 +20,8 @@ interface HomeSectionProps {
   onEditCard: (payload: EditableCardPayload) => void;
   onNavigate: (section: NavSection) => void;
   onSelectNews: (newsItem: NewsItem) => void;
+  onToggleFeatureNews?: (newsId: string) => void;
+  onToggleHighlightActivity?: (activityId: string) => void;
 }
 
 export const HomeSection: React.FC<HomeSectionProps> = ({
@@ -27,62 +30,183 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   onEditCard,
   onNavigate,
   onSelectNews,
+  onToggleFeatureNews,
+  onToggleHighlightActivity,
 }) => {
-  const featuredNotice =
-    content.news.find((n) => n.category === 'thong-bao') || content.news[0];
-  const latestNews = content.news.slice(0, 3);
-  const highlightedActivities = content.activities.slice(0, 3);
+  // Danh sách các tin tức / thông báo được ghim nổi bật lên Trang Chủ
+  const featuredNewsList = content.news.filter((n) => n.isFeatured);
+  const [activeFeaturedIndex, setActiveFeaturedIndex] = useState(0);
+
+  // Ưu tiên bài được ghim nổi bật, nếu không có lấy thông báo hoặc tin đầu tiên
+  const currentFeatured =
+    featuredNewsList.length > 0
+      ? featuredNewsList[activeFeaturedIndex % featuredNewsList.length]
+      : content.news.find((n) => n.category === 'thong-bao') || content.news[0];
+
+  // Ưu tiên hiển thị tin được ghim lên đầu lưới tin tức Trang Chủ
+  const sortedNewsForHome = [...content.news].sort((a, b) => {
+    if (a.isFeatured && !b.isFeatured) return -1;
+    if (!a.isFeatured && b.isFeatured) return 1;
+    return 0;
+  });
+  const latestNews = sortedNewsForHome.slice(0, 3);
+
+  // Ưu tiên hiển thị hoạt động có highlight lên đầu mục Trải nghiệm Trang Chủ
+  const sortedActivitiesForHome = [...content.activities].sort((a, b) => {
+    if (a.highlight && !b.highlight) return -1;
+    if (!a.highlight && b.highlight) return 1;
+    return 0;
+  });
+  const highlightedActivities = sortedActivitiesForHome.slice(0, 3);
+
   const principal = content.principals[0];
 
   return (
     <div className="space-y-12 py-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-      {/* 1. Emergency / Urgent Notice Ticker */}
-      {featuredNotice && (
-        <div className="relative group bg-gradient-to-r from-amber-500/15 via-emerald-50 to-emerald-100/60 border border-amber-300/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+      {/* 1. Tiêu Điểm Nổi Bật Được Ghim Trang Chủ / Thông Báo Khẩn */}
+      {currentFeatured && (
+        <div
+          className={`relative group border rounded-3xl p-5 sm:p-6 shadow-md transition-all ${
+            currentFeatured.isFeatured
+              ? 'bg-gradient-to-r from-amber-500/20 via-amber-100/40 to-emerald-50 border-amber-400 shadow-amber-200/40'
+              : 'bg-gradient-to-r from-amber-500/10 via-emerald-50 to-emerald-100/50 border-emerald-300'
+          }`}
+        >
+          {/* Quick Admin Actions */}
           {isAdmin && (
-            <button
-              onClick={() =>
-                onEditCard({
-                  sectionKey: 'news',
-                  itemId: featuredNotice.id,
-                  title: featuredNotice.title,
-                  subtitle: featuredNotice.categoryLabel,
-                  content: featuredNotice.summary,
-                  imageUrl: featuredNotice.imageUrl,
-                  category: featuredNotice.category,
-                  extraField1Label: 'Ngày đăng',
-                  extraField1Value: featuredNotice.date,
-                  extraField2Label: 'Tác giả',
-                  extraField2Value: featuredNotice.author,
-                })
-              }
-              className="absolute -top-2.5 right-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-2 py-0.5 rounded-full text-[10px] shadow-sm flex items-center space-x-1"
-            >
-              <Edit className="w-3 h-3" />
-              <span>Sửa thông báo này</span>
-            </button>
+            <div className="absolute -top-3 right-4 z-20 flex items-center gap-2">
+              <button
+                onClick={() => onToggleFeatureNews?.(currentFeatured.id)}
+                className={`font-black px-3 py-1 rounded-full text-[11px] shadow-md flex items-center space-x-1.5 transition-all ${
+                  currentFeatured.isFeatured
+                    ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 ring-2 ring-amber-300'
+                    : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                }`}
+                title={
+                  currentFeatured.isFeatured
+                    ? 'Bỏ ghim bài này khỏi Trang Chủ'
+                    : 'Ghim bài này làm Tiêu Điểm Trang Chủ'
+                }
+              >
+                <Star
+                  className={`w-3.5 h-3.5 ${
+                    currentFeatured.isFeatured
+                      ? 'fill-slate-950 text-slate-950'
+                      : 'text-slate-400'
+                  }`}
+                />
+                <span>
+                  {currentFeatured.isFeatured
+                    ? '★ Đang Ghim Trang Chủ'
+                    : '☆ Ghim Làm Tiêu Điểm'}
+                </span>
+              </button>
+
+              <button
+                onClick={() =>
+                  onEditCard({
+                    sectionKey: 'news',
+                    itemId: currentFeatured.id,
+                    title: currentFeatured.title,
+                    subtitle: currentFeatured.categoryLabel,
+                    content: currentFeatured.content || currentFeatured.summary,
+                    imageUrl: currentFeatured.imageUrl,
+                    category: currentFeatured.category,
+                    isFeatured: currentFeatured.isFeatured,
+                    extraField1Label: 'Ngày đăng',
+                    extraField1Value: currentFeatured.date,
+                    extraField2Label: 'Tác giả',
+                    extraField2Value: currentFeatured.author,
+                  })
+                }
+                className="bg-slate-900 hover:bg-black text-white font-bold px-3 py-1 rounded-full text-[11px] shadow-md flex items-center space-x-1"
+              >
+                <Edit className="w-3 h-3" />
+                <span>Sửa bài này</span>
+              </button>
+            </div>
           )}
 
-          <div className="flex items-center space-x-3">
-            <span className="p-2 bg-amber-500 text-slate-950 rounded-xl font-bold shrink-0 animate-pulse">
-              <Bell className="w-5 h-5" />
-            </span>
-            <div>
-              <span className="text-[11px] uppercase tracking-wider font-extrabold text-amber-800 block">
-                THÔNG BÁO MỚI NHẤT TỪ NHÀ TRƯỜNG
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center space-x-3.5 flex-1 min-w-0">
+              <span
+                className={`p-3 rounded-2xl font-bold shrink-0 ${
+                  currentFeatured.isFeatured
+                    ? 'bg-amber-500 text-slate-950 shadow-md animate-pulse ring-4 ring-amber-300/50'
+                    : 'bg-emerald-600 text-white shadow'
+                }`}
+              >
+                {currentFeatured.isFeatured ? (
+                  <Star className="w-5 h-5 fill-slate-950" />
+                ) : (
+                  <Bell className="w-5 h-5" />
+                )}
               </span>
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 line-clamp-1">
-                {featuredNotice.title}
-              </h3>
+
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`text-[10px] uppercase tracking-wider font-black px-2.5 py-0.5 rounded-full inline-block ${
+                      currentFeatured.isFeatured
+                        ? 'bg-amber-500 text-slate-950 shadow-2xs'
+                        : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    }`}
+                  >
+                    {currentFeatured.isFeatured
+                      ? '★ TIÊU ĐIỂM NỔI BẬT ĐƯỢC GHIM TRANG CHỦ'
+                      : '📢 THÔNG BÁO MỚI NHẤT TỪ NHÀ TRƯỜNG'}
+                  </span>
+                  <span className="text-[11px] text-slate-500 font-semibold">
+                    {currentFeatured.date} • {currentFeatured.categoryLabel}
+                  </span>
+                </div>
+                <h3
+                  className="text-base sm:text-lg font-black text-slate-900 hover:text-emerald-800 transition-colors line-clamp-2 cursor-pointer leading-snug"
+                  onClick={() => onSelectNews(currentFeatured)}
+                >
+                  {currentFeatured.title}
+                </h3>
+                <p className="text-xs text-slate-600 line-clamp-2 sm:line-clamp-1 leading-relaxed">
+                  {currentFeatured.summary}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto pt-2 sm:pt-0">
+              {/* If multiple pinned news, allow switching right here */}
+              {featuredNewsList.length > 1 && (
+                <div className="flex items-center bg-white/95 border border-amber-300 rounded-xl px-2.5 py-1 text-xs font-bold text-amber-950 shadow-2xs">
+                  <span className="text-[10px] uppercase tracking-wider mr-2 text-slate-500">
+                    Ghim ({featuredNewsList.length}):
+                  </span>
+                  <div className="flex gap-1">
+                    {featuredNewsList.map((item, idx) => (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveFeaturedIndex(idx)}
+                        className={`w-6 h-6 rounded-lg text-[10px] font-black transition-all ${
+                          activeFeaturedIndex % featuredNewsList.length === idx
+                            ? 'bg-amber-500 text-slate-950 shadow-xs scale-105'
+                            : 'bg-slate-100 text-slate-600 hover:bg-amber-100'
+                        }`}
+                        title={item.title}
+                      >
+                        {idx + 1}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => onSelectNews(currentFeatured)}
+                className="inline-flex items-center text-xs font-black text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 border border-amber-400 px-4 py-2 rounded-xl shadow-xs hover:shadow-md transition-all shrink-0"
+              >
+                <span>Xem chi tiết ngay</span>
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </button>
             </div>
           </div>
-          <button
-            onClick={() => onSelectNews(featuredNotice)}
-            className="inline-flex items-center text-xs font-bold text-emerald-800 hover:text-emerald-950 bg-white border border-emerald-300 px-3 py-1.5 rounded-lg hover:shadow-xs transition-all shrink-0 self-start sm:self-auto"
-          >
-            <span>Xem chi tiết thông báo</span>
-            <ChevronRight className="w-4 h-4 ml-1" />
-          </button>
         </div>
       )}
 
@@ -178,30 +302,60 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
           {latestNews.map((news) => (
             <div
               key={news.id}
-              className="relative group bg-white border border-slate-200 hover:border-emerald-300 rounded-2xl overflow-hidden shadow-xs hover:shadow-lg transition-all flex flex-col"
+              className={`relative group bg-white border rounded-2xl overflow-hidden shadow-xs hover:shadow-lg transition-all flex flex-col ${
+                news.isFeatured
+                  ? 'border-amber-400 ring-2 ring-amber-200/60'
+                  : 'border-slate-200 hover:border-emerald-300'
+              }`}
             >
               {isAdmin && (
-                <button
-                  onClick={() =>
-                    onEditCard({
-                      sectionKey: 'news',
-                      itemId: news.id,
-                      title: news.title,
-                      subtitle: news.categoryLabel,
-                      content: news.content || news.summary,
-                      imageUrl: news.imageUrl,
-                      category: news.category,
-                      extraField1Label: 'Ngày đăng',
-                      extraField1Value: news.date,
-                      extraField2Label: 'Tác giả',
-                      extraField2Value: news.author,
-                    })
-                  }
-                  className="absolute top-2.5 right-2.5 z-20 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-2 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1"
-                >
-                  <Edit className="w-3 h-3" />
-                  <span>Sửa thẻ này</span>
-                </button>
+                <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5">
+                  <button
+                    onClick={() => onToggleFeatureNews?.(news.id)}
+                    className={`font-black px-2.5 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1 transition-all ${
+                      news.isFeatured
+                        ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 ring-1 ring-amber-300'
+                        : 'bg-white/95 hover:bg-slate-100 text-slate-700 border border-slate-300'
+                    }`}
+                    title={
+                      news.isFeatured
+                        ? 'Bỏ ghim khỏi Trang Chủ'
+                        : 'Ghim nổi bật lên Trang Chủ'
+                    }
+                  >
+                    <Star
+                      className={`w-3 h-3 ${
+                        news.isFeatured
+                          ? 'fill-slate-950 text-slate-950'
+                          : 'text-slate-400'
+                      }`}
+                    />
+                    <span>{news.isFeatured ? 'Đang ghim' : 'Ghim'}</span>
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      onEditCard({
+                        sectionKey: 'news',
+                        itemId: news.id,
+                        title: news.title,
+                        subtitle: news.categoryLabel,
+                        content: news.content || news.summary,
+                        imageUrl: news.imageUrl,
+                        category: news.category,
+                        isFeatured: news.isFeatured,
+                        extraField1Label: 'Ngày đăng',
+                        extraField1Value: news.date,
+                        extraField2Label: 'Tác giả',
+                        extraField2Value: news.author,
+                      })
+                    }
+                    className="bg-slate-900 hover:bg-black text-white font-bold px-2 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1"
+                  >
+                    <Edit className="w-3 h-3" />
+                    <span>Sửa</span>
+                  </button>
+                </div>
               )}
 
               <div className="h-48 overflow-hidden relative">
@@ -210,6 +364,12 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                   alt={news.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
+                {news.isFeatured && (
+                  <span className="absolute top-2.5 left-2.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-black text-[10px] px-2.5 py-0.5 rounded-full shadow-md flex items-center gap-1 z-10">
+                    <Star className="w-3 h-3 fill-slate-950" />
+                    <span>GHIM TRANG CHỦ</span>
+                  </span>
+                )}
                 <span className="absolute bottom-2.5 left-2.5 bg-emerald-800/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md backdrop-blur-xs">
                   {news.categoryLabel}
                 </span>
@@ -274,35 +434,65 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
           {highlightedActivities.map((act) => (
             <div
               key={act.id}
-              className="relative group bg-emerald-950/60 border border-emerald-700/60 rounded-2xl overflow-hidden hover:border-amber-400/80 transition-all flex flex-col"
+              className={`relative group bg-emerald-950/60 border rounded-2xl overflow-hidden hover:border-amber-400/80 transition-all flex flex-col ${
+                act.highlight
+                  ? 'border-amber-400/80 ring-2 ring-amber-400/30'
+                  : 'border-emerald-700/60'
+              }`}
             >
               {isAdmin && (
-                <button
-                  onClick={() =>
-                    onEditCard({
-                      sectionKey: 'activities',
-                      itemId: act.id,
-                      title: act.title,
-                      subtitle: act.categoryLabel,
-                      content: act.description,
-                      imageUrl: act.imageUrl,
-                      category: act.category,
-                      extraField1Label: 'Lịch hoạt động',
-                      extraField1Value: act.date,
-                    })
-                  }
-                  className="absolute top-2 right-2 z-20 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-2 py-0.5 rounded-full text-[10px] shadow"
-                >
-                  Sửa thẻ này
-                </button>
+                <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5">
+                  <button
+                    onClick={() => onToggleHighlightActivity?.(act.id)}
+                    className={`font-black px-2 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1 transition-all ${
+                      act.highlight
+                        ? 'bg-amber-400 text-slate-950 ring-1 ring-amber-200'
+                        : 'bg-white/90 text-slate-800 hover:bg-emerald-100'
+                    }`}
+                    title={
+                      act.highlight
+                        ? 'Hủy nổi bật hoạt động trên Trang Chủ'
+                        : 'Làm nổi bật hoạt động trên Trang Chủ'
+                    }
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>{act.highlight ? 'Đang nổi bật' : 'Nổi bật'}</span>
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      onEditCard({
+                        sectionKey: 'activities',
+                        itemId: act.id,
+                        title: act.title,
+                        subtitle: act.categoryLabel,
+                        content: act.description,
+                        imageUrl: act.imageUrl,
+                        category: act.category,
+                        highlight: act.highlight,
+                        extraField1Label: 'Lịch hoạt động',
+                        extraField1Value: act.date,
+                      })
+                    }
+                    className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-2 py-0.5 rounded-full text-[10px] shadow"
+                  >
+                    Sửa
+                  </button>
+                </div>
               )}
 
-              <div className="h-40 overflow-hidden">
+              <div className="h-40 overflow-hidden relative">
                 <img
                   src={act.imageUrl}
                   alt={act.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
+                {act.highlight && (
+                  <span className="absolute top-2 left-2 bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-[10px] px-2 py-0.5 rounded-full shadow-md flex items-center gap-1 z-10">
+                    <Sparkles className="w-3 h-3" />
+                    <span>TIÊU ĐIỂM</span>
+                  </span>
+                )}
               </div>
               <div className="p-4 space-y-2 flex-1 flex flex-col justify-between">
                 <div>
