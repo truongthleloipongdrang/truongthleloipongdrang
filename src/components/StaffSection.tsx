@@ -51,42 +51,112 @@ export const StaffSection: React.FC<StaffSectionProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedStaff, isPhotoZoomed]);
 
-  const gradeOptions = ['Tất cả', 'Khối 1', 'Khối 2', 'Khối 3', 'Khối 4', 'Khối 5'];
+  const gradeOptions = [
+    'Tất cả',
+    'Tổ Khối 1',
+    'Tổ Khối 2',
+    'Tổ Khối 3',
+    'Tổ Khối 4',
+    'Tổ Khối 5',
+    'Tổ Văn Phòng',
+  ];
 
   const filteredTeachers =
     selectedGrade === 'Tất cả'
       ? content.teachers
-      : content.teachers.filter((t) => {
-          const target = selectedGrade.toLowerCase(); // e.g. "khối 1"
-          const num = target.replace('khối', '').trim(); // e.g. "1"
+      : content.teachers.filter((teacher) => {
+          const role = (teacher.role || '').toLowerCase();
+          const subjectOrGrade = (teacher.subjectOrGrade || '').toLowerCase();
+          const campus = (teacher.campus || '').toLowerCase();
+          const fullText = `${role} ${subjectOrGrade} ${campus}`;
 
-          const campus = (t.campus || '').toLowerCase();
-          const subject = (t.subjectOrGrade || '').toLowerCase();
+          // Xử lý riêng cho nút "Tổ Văn Phòng"
+          if (selectedGrade === 'Tổ Văn Phòng') {
+            const vpKeywords = [
+              'văn phòng',
+              'van phong',
+              'kế toán',
+              'ke toan',
+              'y tế',
+              'y te',
+              'văn thư',
+              'van thu',
+              'thủ quỹ',
+              'thu quy',
+              'thư viện',
+              'thu vien',
+              'thiết bị',
+              'thiet bi',
+              'bảo vệ',
+              'bao ve',
+              'phục vụ',
+              'phuc vu',
+            ];
+            return vpKeywords.some((kw) => fullText.includes(kw));
+          }
 
-          // 1. Khớp trực tiếp nếu ghi rõ khối trong campus hoặc môn dạy/khối phụ trách
+          // Xử lý cho các khối lớp: Khối 1 -> Khối 5
+          const match = selectedGrade.match(/\d+/);
+          if (!match) return true;
+          const gradeNum = parseInt(match[0], 10); // 1, 2, 3, 4, 5
+
+          // Nếu là nhân sự thuần túy của Tổ Văn Phòng (kế toán, y tế...), không cho lẫn sang các khối lớp
           if (
-            campus.includes(target) ||
-            subject.includes(target) ||
-            subject.includes(`lớp ${num}`) ||
-            subject.includes(`k${num}`)
+            (campus.includes('văn phòng') ||
+              role.includes('văn phòng') ||
+              subjectOrGrade.includes('kế toán') ||
+              subjectOrGrade.includes('y tế') ||
+              subjectOrGrade.includes('thư viện')) &&
+            !fullText.includes(`khối ${gradeNum}`) &&
+            !fullText.includes(`lớp ${gradeNum}`)
           ) {
+            return false;
+          }
+
+          // 1. Khớp cụ thể theo từ khóa khối hoặc tổ: "Khối 1", "Tổ 1", "Tổ chuyên môn Khối 1", "K1"
+          const gradeKeywordRegex = new RegExp(
+            `(?:khối|khoi|tổ|to)\\s*(?:chuyên môn\\s*)?${gradeNum}\\b`,
+            'i'
+          );
+          if (gradeKeywordRegex.test(fullText)) {
             return true;
           }
 
-          // 2. Giáo viên bộ môn dạy nhiều khối (ví dụ: "Khối 3, 4, 5" khớp Khối 3, Khối 4, Khối 5)
-          if ((subject.includes('khối') || subject.includes('môn')) && subject.includes(num)) {
+          // 2. Khớp cụ thể theo tên lớp (VD: "Lớp 1A", "Lớp 1B", "Lớp 1C", "Lớp 1D", "Lớp 1E", "Lớp 1G", "Lớp 1H" -> chỉ Khối 1)
+          const classRegex = new RegExp(`(?:lớp|lop)\\s*${gradeNum}[a-zđ0-9]?\\b`, 'i');
+          if (classRegex.test(subjectOrGrade) || classRegex.test(role)) {
             return true;
           }
 
-          // 3. Tương thích dữ liệu cũ nếu lưu "Trường chính", "Phân hiệu 1", "Phân hiệu 2"
-          if (selectedGrade === 'Khối 1' && (campus === 'trường chính' || subject.includes('khối 1'))) return true;
-          if (selectedGrade === 'Khối 2' && (campus === 'phân hiệu 1' || subject.includes('khối 2'))) return true;
-          if (selectedGrade === 'Khối 3' && (campus === 'phân hiệu 2' || subject.includes('khối 3'))) return true;
-          if (selectedGrade === 'Khối 4' && subject.includes('khối 4')) return true;
-          if (selectedGrade === 'Khối 5' && subject.includes('khối 5')) return true;
+          // 3. Khớp định dạng viết tắt tên lớp (VD: "1A", "1B", "2A", "2B"...)
+          const shortClassRegex = new RegExp(`\\b${gradeNum}[a-zđ]\\b`, 'i');
+          if (shortClassRegex.test(subjectOrGrade)) {
+            return true;
+          }
 
-          // 4. Giáo viên phụ trách toàn trường (như Tổng phụ trách Đội)
-          if (campus === 'toàn trường' || subject.includes('toàn trường')) {
+          // 4. Giáo viên bộ môn dạy liên khối (VD: "Môn Tiếng Anh (Khối 3, 4, 5)")
+          if (
+            subjectOrGrade.includes('khối') ||
+            subjectOrGrade.includes('khoi') ||
+            subjectOrGrade.includes('môn') ||
+            subjectOrGrade.includes('mon')
+          ) {
+            const multiGradeRegex = new RegExp(
+              `(?:khối|khoi)\\s*[^.]*?\\b${gradeNum}\\b`,
+              'i'
+            );
+            if (multiGradeRegex.test(subjectOrGrade)) {
+              return true;
+            }
+          }
+
+          // 5. Nếu trường campus được lưu tường minh là "Khối 1", "Tổ Khối 1"...
+          if (
+            campus === `khối ${gradeNum}` ||
+            campus === `khoi ${gradeNum}` ||
+            campus === `tổ khối ${gradeNum}` ||
+            campus === `to khoi ${gradeNum}`
+          ) {
             return true;
           }
 
@@ -240,7 +310,7 @@ export const StaffSection: React.FC<StaffSectionProps> = ({
           <div className="flex items-center space-x-2">
             <GraduationCap className="w-5 h-5 text-emerald-700" />
             <h3 className="text-xl font-black text-slate-900">
-              Đội Ngũ Giáo Viên Các Tổ Bộ Môn
+              Đội Ngũ Giáo Viên & Tổ Văn Phòng
             </h3>
           </div>
 
