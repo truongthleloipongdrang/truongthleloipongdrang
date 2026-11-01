@@ -90,7 +90,7 @@ export interface Teacher {
   name: string;
   role: string;
   subjectOrGrade: string;
-  campus: 'Trường chính' | 'Phân hiệu 1' | 'Phân hiệu 2' | 'Toàn trường';
+  campus: 'Trường chính' | 'Phân hiệu 1' | 'Phân hiệu 2' | 'Toàn trường' | 'Khối 1' | 'Khối 2' | 'Khối 3' | 'Khối 4' | 'Khối 5' | string;
   bio: string;
   avatar: string;
   qualification: string;
