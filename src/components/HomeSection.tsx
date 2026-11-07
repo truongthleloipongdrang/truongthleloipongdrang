@@ -11,6 +11,8 @@ import {
   Award,
   Edit,
   Star,
+  ExternalLink,
+  Globe,
 } from 'lucide-react';
 import { SiteContent, EditableCardPayload, NavSection, NewsItem } from '../types';
 
@@ -344,10 +346,17 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                         imageUrl: news.imageUrl,
                         category: news.category,
                         isFeatured: news.isFeatured,
+                        isExternalLink: Boolean(news.externalUrl),
+                        externalUrl: news.externalUrl,
+                        sourceName: news.sourceName,
                         extraField1Label: 'Ngày đăng',
                         extraField1Value: news.date,
                         extraField2Label: 'Tác giả',
                         extraField2Value: news.author,
+                        extraField3Label: 'Link chia sẻ gốc (URL bài báo/internet)',
+                        extraField3Value: news.externalUrl || '',
+                        extraField4Label: 'Tên nguồn (VD: Báo Đắk Lắk, GD&TĐ...)',
+                        extraField4Value: news.sourceName || '',
                       })
                     }
                     className="bg-slate-900 hover:bg-black text-white font-bold px-2 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1"
@@ -370,9 +379,17 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                     <span>GHIM TRANG CHỦ</span>
                   </span>
                 )}
-                <span className="absolute bottom-2.5 left-2.5 bg-emerald-800/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md backdrop-blur-xs">
-                  {news.categoryLabel}
-                </span>
+                <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 flex-wrap">
+                  <span className="bg-emerald-800/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md backdrop-blur-xs">
+                    {news.categoryLabel}
+                  </span>
+                  {news.sourceName && (
+                    <span className="bg-sky-900/90 text-sky-200 text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-xs flex items-center gap-1">
+                      <Globe className="w-2.5 h-2.5 text-sky-300" />
+                      {news.sourceName}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
@@ -381,7 +398,7 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                     <Calendar className="w-3.5 h-3.5 text-emerald-600" />
                     <span>{news.date}</span>
                     <span>•</span>
-                    <span>{news.author}</span>
+                    <span className="line-clamp-1">{news.author}</span>
                   </div>
                   <h3
                     onClick={() => onSelectNews(news)}
@@ -394,14 +411,28 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                   </p>
                 </div>
 
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                   <button
                     onClick={() => onSelectNews(news)}
-                    className="text-xs font-bold text-emerald-700 hover:text-emerald-900 flex items-center"
+                    className="text-xs font-bold text-emerald-700 hover:text-emerald-900 flex items-center cursor-pointer"
                   >
-                    Đọc tiếp
+                    <span>Đọc tiếp</span>
                     <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
                   </button>
+
+                  {news.externalUrl && (
+                    <a
+                      href={news.externalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center text-[10px] font-bold text-sky-700 hover:text-sky-900 bg-sky-50 hover:bg-sky-100 px-2 py-0.5 rounded-md border border-sky-200 transition-colors"
+                      title="Mở bài viết gốc trên trang báo"
+                    >
+                      <span>Mở link gốc</span>
+                      <ExternalLink className="w-2.5 h-2.5 ml-1" />
+                    </a>
+                  )}
                 </div>
               </div>
             </div>

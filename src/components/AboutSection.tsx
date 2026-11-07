@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   History,
   Target,
@@ -11,6 +11,8 @@ import {
   Trees,
   Edit,
   MapPin,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { SiteContent, EditableCardPayload } from '../types';
 
@@ -25,6 +27,11 @@ export const AboutSection: React.FC<AboutSectionProps> = ({
   isAdmin,
   onEditCard,
 }) => {
+  const [isExpanded, setIsExpanded] = useState<boolean>(false);
+
+  const historyText = content.history || '';
+  const isLongText = historyText.length > 280 || historyText.includes('\n');
+
   return (
     <div className="space-y-12 py-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
       {/* 1. Header Banner */}
@@ -48,13 +55,13 @@ export const AboutSection: React.FC<AboutSectionProps> = ({
             onClick={() =>
               onEditCard({
                 sectionKey: 'history',
-                title: content.historyTitle || 'Gần Ba Thập Kỷ Vượt Khó Ươm Mầm Con Chữ',
+                title: content.historyTitle || 'Kế Thừa Truyền Thống – Đoàn Kết, Đổi Mới – Vững Bước Tương Lai',
                 subtitle: content.historyTag || 'Dấu Ấn Thời Gian & Trưởng Thành',
                 content: content.history,
                 imageUrl: content.historyImageUrl || 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=1000&q=80',
                 imageCaption: content.historyImageCaption || 'Trường chính rợp bóng cây xanh tại Thôn Ea Tút, Pơng Drang',
                 extraField1Label: 'Năm thành lập',
-                extraField1Value: content.historyStat1Value || '1998',
+                extraField1Value: content.historyStat1Value || '1997',
                 extraField2Label: 'Nhãn năm thành lập',
                 extraField2Value: content.historyStat1Label || 'Năm thành lập',
                 extraField3Label: 'Số điểm trường',
@@ -81,16 +88,44 @@ export const AboutSection: React.FC<AboutSectionProps> = ({
               <span>{content.historyTag || 'Dấu Ấn Thời Gian & Trưởng Thành'}</span>
             </div>
             <h3 className="text-2xl font-black text-slate-900 leading-tight">
-              {content.historyTitle || 'Gần Ba Thập Kỷ Vượt Khó Ươm Mầm Con Chữ'}
+              {content.historyTitle || 'Kế Thừa Truyền Thống – Đoàn Kết, Đổi Mới – Vững Bước Tương Lai'}
             </h3>
-            <p className="text-sm text-slate-700 leading-relaxed text-justify">
-              {content.history}
-            </p>
+
+            {/* Content: Truncated when long, expandable with 'Xem chi tiết' button */}
+            <div className="space-y-2">
+              <div
+                className={`text-sm text-slate-700 leading-relaxed text-justify whitespace-pre-line relative transition-all duration-300 ${
+                  !isExpanded && isLongText ? 'max-h-36 overflow-hidden' : ''
+                }`}
+              >
+                {content.history}
+                {!isExpanded && isLongText && (
+                  <div className="absolute bottom-0 inset-x-0 h-16 bg-gradient-to-t from-white via-white/80 to-transparent pointer-events-none" />
+                )}
+              </div>
+
+              {isLongText && (
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsExpanded(!isExpanded)}
+                    className="inline-flex items-center space-x-1.5 text-xs font-bold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 px-3.5 py-1.5 rounded-full border border-emerald-200 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <span>{isExpanded ? 'Thu gọn' : 'Xem chi tiết'}</span>
+                    {isExpanded ? (
+                      <ChevronUp className="w-3.5 h-3.5 text-emerald-700" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5 text-emerald-700" />
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
 
             <div className="grid grid-cols-3 gap-3 pt-3 border-t border-slate-100 text-center">
               <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-100">
                 <span className="block font-black text-xl text-emerald-800">
-                  {content.historyStat1Value || '1998'}
+                  {content.historyStat1Value || '1997'}
                 </span>
                 <span className="text-[11px] text-slate-600 font-medium">
                   {content.historyStat1Label || 'Năm thành lập'}
@@ -118,13 +153,17 @@ export const AboutSection: React.FC<AboutSectionProps> = ({
           <div className="lg:col-span-5">
             <div className="relative rounded-2xl overflow-hidden shadow-lg border-4 border-emerald-100">
               <img
-                src={content.historyImageUrl || 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=1000&q=80'}
+                src={
+                  content.historyImageUrl ||
+                  'https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=1000&q=80'
+                }
                 alt="Khuôn viên trường Tiểu học Lê Lợi"
                 className="w-full h-72 object-cover"
               />
               <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-slate-950/80 via-slate-950/40 to-transparent p-4 text-white">
                 <p className="text-xs font-semibold">
-                  {content.historyImageCaption || 'Trường chính rợp bóng cây xanh tại Thôn Ea Tút, Pơng Drang'}
+                  {content.historyImageCaption ||
+                    'Trường chính rợp bóng cây xanh tại Thôn Ea Tút, Pơng Drang'}
                 </p>
               </div>
             </div>

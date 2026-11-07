@@ -108,6 +108,9 @@ export interface NewsItem {
   author: string;
   imageUrl: string;
   isFeatured?: boolean;
+  isExternalLink?: boolean;
+  externalUrl?: string;
+  sourceName?: string;
 }
 
 export interface ActivityItem {
@@ -291,6 +294,9 @@ export interface EditableCardPayload {
   category?: string;
   isFeatured?: boolean;
   highlight?: boolean;
+  isExternalLink?: boolean;
+  externalUrl?: string;
+  sourceName?: string;
   extraField1Label?: string;
   extraField1Value?: string;
   extraField2Label?: string;

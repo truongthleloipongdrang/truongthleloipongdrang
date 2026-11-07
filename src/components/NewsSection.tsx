@@ -11,6 +11,13 @@ import {
   Share2,
   Clock,
   Star,
+  PlusCircle,
+  ExternalLink,
+  Globe,
+  Link2,
+  Sparkles,
+  CheckCircle,
+  FileText,
 } from 'lucide-react';
 import { NewsItem, EditableCardPayload } from '../types';
 
@@ -21,7 +28,38 @@ interface NewsSectionProps {
   selectedNews: NewsItem | null;
   onSelectNews: (news: NewsItem | null) => void;
   onToggleFeatureNews?: (newsId: string) => void;
+  onAddNews?: (news: Omit<NewsItem, 'id'>) => void;
+  onDeleteNews?: (newsId: string) => void;
 }
+
+const PRESET_NEWS_IMAGES = [
+  {
+    name: 'Học sinh & Lớp học vùng cao',
+    url: 'https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=900&q=80',
+  },
+  {
+    name: 'Khuôn viên trường khang trang',
+    url: 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=900&q=80',
+  },
+  {
+    name: 'Công nghệ & Chuyển đổi số',
+    url: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=900&q=80',
+  },
+  {
+    name: 'Đọc sách & Văn hóa truyền thống',
+    url: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=900&q=80',
+  },
+];
+
+const SOURCE_PRESETS = [
+  'Báo Đắk Lắk',
+  'Báo Giáo Dục & Thời Đại',
+  'Cổng TTĐT Bộ GD&ĐT',
+  'Báo Dân Trí',
+  'VnExpress',
+  'Báo Tuổi Trẻ',
+  'Trang TTĐT Xã Pơng Drang',
+];
 
 export const NewsSection: React.FC<NewsSectionProps> = ({
   newsList,
@@ -30,21 +68,50 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
   selectedNews,
   onSelectNews,
   onToggleFeatureNews,
+  onAddNews,
+  onDeleteNews,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+
+  // Form states for creating news
+  const [postMode, setPostMode] = useState<'internal' | 'external'>('external');
+  const [title, setTitle] = useState('');
+  const [category, setCategory] = useState<'thong-bao' | 'tin-tuc' | 'hoat-dong'>('tin-tuc');
+  const [externalUrl, setExternalUrl] = useState('');
+  const [sourceName, setSourceName] = useState('Báo Đắk Lắk');
+  const [summary, setSummary] = useState('');
+  const [content, setContent] = useState('');
+  const [imageUrl, setImageUrl] = useState(PRESET_NEWS_IMAGES[0].url);
+  const [author, setAuthor] = useState('Ban Truyền Thông TH Lê Lợi');
+  const [date, setDate] = useState(() => {
+    const today = new Date();
+    const d = String(today.getDate()).padStart(2, '0');
+    const m = String(today.getMonth() + 1).padStart(2, '0');
+    const y = today.getFullYear();
+    return `${d}/${m}/${y}`;
+  });
+  const [isFeatured, setIsFeatured] = useState<boolean>(false);
 
   const categories = [
     { id: 'all', label: 'Tất Cả' },
     { id: 'thong-bao', label: 'Thông Báo' },
     { id: 'tin-tuc', label: 'Tin Tức' },
     { id: 'hoat-dong', label: 'Sự Kiện' },
+    { id: 'external', label: 'Tin Báo Chí & Liên Kết' },
   ];
 
   const filteredNews = newsList.filter((item) => {
     const matchesSearch =
       item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.summary.toLowerCase().includes(searchTerm.toLowerCase());
+      item.summary.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.sourceName && item.sourceName.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    if (selectedCategory === 'external') {
+      return matchesSearch && Boolean(item.externalUrl || item.isExternalLink);
+    }
+
     const matchesCategory =
       selectedCategory === 'all' ||
       item.category === selectedCategory ||
@@ -53,6 +120,46 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
   });
 
   const featured = newsList.find((n) => n.isFeatured) || newsList[0];
+
+  const handleResetForm = () => {
+    setTitle('');
+    setExternalUrl('');
+    setSourceName('Báo Đắk Lắk');
+    setSummary('');
+    setContent('');
+    setImageUrl(PRESET_NEWS_IMAGES[0].url);
+    setIsFeatured(false);
+  };
+
+  const handleCreateSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim()) return;
+
+    const categoryLabels: Record<string, string> = {
+      'thong-bao': 'Thông Báo',
+      'tin-tuc': postMode === 'external' ? 'Tin Báo Chí' : 'Tin Giáo Dục',
+      'hoat-dong': 'Sự Kiện',
+    };
+
+    const newNewsItem: Omit<NewsItem, 'id'> = {
+      title: title.trim(),
+      category,
+      categoryLabel: categoryLabels[category] || 'Tin Tức',
+      summary: summary.trim() || title.trim(),
+      content: content.trim() || summary.trim() || title.trim(),
+      imageUrl: imageUrl.trim() || PRESET_NEWS_IMAGES[0].url,
+      date,
+      author: postMode === 'external' ? (sourceName ? `Nguồn: ${sourceName}` : author) : author,
+      isFeatured,
+      isExternalLink: postMode === 'external',
+      externalUrl: postMode === 'external' ? externalUrl.trim() : undefined,
+      sourceName: postMode === 'external' ? sourceName.trim() : undefined,
+    };
+
+    onAddNews?.(newNewsItem);
+    handleResetForm();
+    setShowCreateModal(false);
+  };
 
   return (
     <div className="space-y-10 py-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
@@ -68,16 +175,31 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
           </h2>
         </div>
 
-        {/* Search input */}
-        <div className="relative w-full md:w-72">
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Tìm kiếm tin tức, thông báo..."
-            className="w-full bg-white border border-slate-300 focus:border-emerald-600 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 shadow-xs"
-          />
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+        <div className="flex flex-wrap items-center gap-3">
+          {isAdmin && (
+            <button
+              onClick={() => {
+                handleResetForm();
+                setShowCreateModal(true);
+              }}
+              className="bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold px-3.5 py-2 rounded-xl text-xs flex items-center space-x-1.5 shadow-sm transition-transform hover:scale-102 cursor-pointer"
+            >
+              <PlusCircle className="w-4 h-4 text-emerald-200" />
+              <span>Đăng Tin / Chia Sẻ Link Báo</span>
+            </button>
+          )}
+
+          {/* Search input */}
+          <div className="relative w-full sm:w-64">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Tìm kiếm tin tức, nguồn báo..."
+              className="w-full bg-white border border-slate-300 focus:border-emerald-600 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 shadow-xs"
+            />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+          </div>
         </div>
       </div>
 
@@ -87,7 +209,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
           <button
             key={cat.id}
             onClick={() => setSelectedCategory(cat.id)}
-            className={`px-4 py-2 rounded-xl transition-all whitespace-nowrap ${
+            className={`px-4 py-2 rounded-xl transition-all whitespace-nowrap cursor-pointer ${
               selectedCategory === cat.id
                 ? 'bg-emerald-700 text-white shadow-xs'
                 : 'bg-white border border-slate-200 text-slate-700 hover:bg-emerald-50'
@@ -141,10 +263,17 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                     imageUrl: featured.imageUrl,
                     category: featured.category,
                     isFeatured: featured.isFeatured,
+                    isExternalLink: Boolean(featured.externalUrl),
+                    externalUrl: featured.externalUrl,
+                    sourceName: featured.sourceName,
                     extraField1Label: 'Ngày đăng',
                     extraField1Value: featured.date,
                     extraField2Label: 'Tác giả',
                     extraField2Value: featured.author,
+                    extraField3Label: 'Link chia sẻ gốc (URL bài báo/internet)',
+                    extraField3Value: featured.externalUrl || '',
+                    extraField4Label: 'Tên nguồn (VD: Báo Đắk Lắk, GD&TĐ...)',
+                    extraField4Value: featured.sourceName || '',
                   })
                 }
                 className="bg-slate-900 hover:bg-black text-white font-bold px-3 py-1 rounded-full text-[11px] shadow-md flex items-center space-x-1"
@@ -156,18 +285,31 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-0">
-            <div className="lg:col-span-7 h-64 lg:h-96 overflow-hidden">
+            <div className="lg:col-span-7 h-64 lg:h-96 overflow-hidden relative">
               <img
                 src={featured.imageUrl}
                 alt={featured.title}
                 className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-300"
               />
+              {featured.externalUrl && (
+                <div className="absolute top-4 left-4 bg-sky-900/90 text-white text-xs font-bold px-3 py-1 rounded-full backdrop-blur-xs flex items-center gap-1.5 shadow">
+                  <Globe className="w-3.5 h-3.5 text-sky-300" />
+                  <span>Tin từ {featured.sourceName || 'Internet'}</span>
+                </div>
+              )}
             </div>
             <div className="lg:col-span-5 p-6 sm:p-8 flex flex-col justify-between space-y-4">
               <div className="space-y-3">
-                <span className="text-[10px] uppercase font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full inline-block">
-                  ★ TIN NỔI BẬT NHẤT
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] uppercase font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full inline-block">
+                    ★ TIN NỔI BẬT NHẤT
+                  </span>
+                  {featured.sourceName && (
+                    <span className="text-[10px] font-bold text-sky-800 bg-sky-100 border border-sky-300 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                      <ExternalLink className="w-2.5 h-2.5" /> {featured.sourceName}
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center text-xs text-slate-400 space-x-2">
                   <Calendar className="w-3.5 h-3.5 text-emerald-600" />
                   <span>{featured.date}</span>
@@ -185,14 +327,25 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                 </p>
               </div>
 
-              <div>
+              <div className="flex flex-wrap items-center gap-3">
                 <button
                   onClick={() => onSelectNews(featured)}
-                  className="inline-flex items-center bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-xl text-xs transition-colors shadow-xs"
+                  className="inline-flex items-center bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-xl text-xs transition-colors shadow-xs cursor-pointer"
                 >
-                  <span>Đọc Toàn Văn Bài Viết</span>
+                  <span>Xem Chi Tiết Bài Viết</span>
                   <ChevronRight className="w-4 h-4 ml-1" />
                 </button>
+                {featured.externalUrl && (
+                  <a
+                    href={featured.externalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center bg-sky-50 hover:bg-sky-100 text-sky-800 font-bold px-3.5 py-2 rounded-xl text-xs border border-sky-200 transition-colors shadow-xs"
+                  >
+                    <span>Mở bài gốc trên {featured.sourceName || 'trang báo'}</span>
+                    <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
+                  </a>
+                )}
               </div>
             </div>
           </div>
@@ -246,10 +399,17 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                       imageUrl: news.imageUrl,
                       category: news.category,
                       isFeatured: news.isFeatured,
+                      isExternalLink: Boolean(news.externalUrl),
+                      externalUrl: news.externalUrl,
+                      sourceName: news.sourceName,
                       extraField1Label: 'Ngày đăng',
                       extraField1Value: news.date,
                       extraField2Label: 'Tác giả',
                       extraField2Value: news.author,
+                      extraField3Label: 'Link chia sẻ gốc (URL bài báo/internet)',
+                      extraField3Value: news.externalUrl || '',
+                      extraField4Label: 'Tên nguồn (VD: Báo Đắk Lắk, GD&TĐ...)',
+                      extraField4Value: news.sourceName || '',
                     })
                   }
                   className="bg-slate-900 hover:bg-black text-white font-bold px-2 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1"
@@ -273,9 +433,17 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                     <span>GHIM TRANG CHỦ</span>
                   </span>
                 )}
-                <span className="absolute bottom-2 left-2 bg-emerald-900/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded backdrop-blur-xs">
-                  {news.categoryLabel}
-                </span>
+                <div className="absolute bottom-2 left-2 flex items-center gap-1.5 flex-wrap">
+                  <span className="bg-emerald-900/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded backdrop-blur-xs">
+                    {news.categoryLabel}
+                  </span>
+                  {news.sourceName && (
+                    <span className="bg-sky-900/90 text-sky-200 text-[10px] font-bold px-2 py-0.5 rounded backdrop-blur-xs flex items-center gap-1">
+                      <Globe className="w-2.5 h-2.5 text-sky-300" />
+                      {news.sourceName}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="p-5 space-y-2">
@@ -283,7 +451,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                   <Calendar className="w-3.5 h-3.5 text-emerald-600" />
                   <span>{news.date}</span>
                   <span>•</span>
-                  <span>{news.author}</span>
+                  <span className="line-clamp-1">{news.author}</span>
                 </div>
                 <h4
                   onClick={() => onSelectNews(news)}
@@ -297,14 +465,28 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
               </div>
             </div>
 
-            <div className="p-5 pt-0">
+            <div className="p-5 pt-0 flex items-center justify-between gap-2 border-t border-slate-100 pt-3 mt-1">
               <button
                 onClick={() => onSelectNews(news)}
-                className="text-xs font-bold text-emerald-700 hover:text-emerald-900 flex items-center"
+                className="text-xs font-bold text-emerald-700 hover:text-emerald-900 flex items-center cursor-pointer"
               >
                 <span>Xem chi tiết</span>
                 <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
               </button>
+
+              {news.externalUrl && (
+                <a
+                  href={news.externalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center text-[11px] font-bold text-sky-700 hover:text-sky-900 bg-sky-50 hover:bg-sky-100 px-2.5 py-1 rounded-lg border border-sky-200 transition-colors shadow-2xs"
+                  title="Mở bài viết gốc trên trang báo"
+                >
+                  <span>Mở link gốc</span>
+                  <ExternalLink className="w-3 h-3 ml-1" />
+                </a>
+              )}
             </div>
           </div>
         ))}
@@ -330,13 +512,21 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
               />
               <button
                 onClick={() => onSelectNews(null)}
-                className="absolute top-4 right-4 bg-slate-900/70 hover:bg-slate-900 text-white p-2 rounded-full transition-colors"
+                className="absolute top-4 right-4 bg-slate-900/70 hover:bg-slate-900 text-white p-2 rounded-full transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
-              <span className="absolute bottom-4 left-4 bg-emerald-800 text-white text-xs font-bold px-3 py-1 rounded-lg">
-                {selectedNews.categoryLabel}
-              </span>
+              <div className="absolute bottom-4 left-4 flex items-center gap-2">
+                <span className="bg-emerald-800 text-white text-xs font-bold px-3 py-1 rounded-lg shadow">
+                  {selectedNews.categoryLabel}
+                </span>
+                {selectedNews.sourceName && (
+                  <span className="bg-sky-800 text-white text-xs font-bold px-3 py-1 rounded-lg shadow flex items-center gap-1.5">
+                    <Globe className="w-3 h-3 text-sky-300" />
+                    {selectedNews.sourceName}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="p-6 sm:p-8 overflow-y-auto space-y-4">
@@ -356,6 +546,33 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                 {selectedNews.title}
               </h2>
 
+              {/* Callout box if this is an external article from internet/newspaper */}
+              {selectedNews.externalUrl && (
+                <div className="bg-gradient-to-r from-sky-50 to-blue-50 border border-sky-200 rounded-2xl p-4 sm:p-5 space-y-3">
+                  <div className="flex items-start justify-between gap-3 flex-col sm:flex-row sm:items-center">
+                    <div>
+                      <div className="flex items-center space-x-2 text-sky-900 font-extrabold text-xs uppercase tracking-wider">
+                        <Globe className="w-4 h-4 text-sky-600" />
+                        <span>Bài Viết Được Chia Sẻ Từ Internet</span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1">
+                        Nguồn báo: <strong className="text-slate-800">{selectedNews.sourceName || 'Trang báo điện tử'}</strong>
+                      </p>
+                    </div>
+
+                    <a
+                      href={selectedNews.externalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center bg-sky-600 hover:bg-sky-700 text-white font-extrabold px-4 py-2 rounded-xl text-xs transition-colors shadow-md shrink-0"
+                    >
+                      <span>Đọc bài gốc trên {selectedNews.sourceName || 'trang báo'}</span>
+                      <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
+                    </a>
+                  </div>
+                </div>
+              )}
+
               <p className="text-sm font-semibold text-slate-700 bg-slate-50 p-4 rounded-xl border-l-4 border-emerald-600 italic">
                 {selectedNews.summary}
               </p>
@@ -369,11 +586,281 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
               <span>Trường Tiểu Học Lê Lợi - Pơng Drang</span>
               <button
                 onClick={() => onSelectNews(null)}
-                className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-1.5 rounded-lg"
+                className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-1.5 rounded-lg cursor-pointer"
               >
                 Đóng
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Modal Create News / Share External Link */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden max-h-[92vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="bg-emerald-800 text-white px-6 py-4 flex items-center justify-between shrink-0">
+              <div className="flex items-center space-x-2">
+                <Newspaper className="w-5 h-5 text-amber-300" />
+                <h3 className="font-black text-base">Đăng Tin Bài / Chia Sẻ Link Báo</h3>
+              </div>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="p-1 rounded-lg text-emerald-200 hover:text-white hover:bg-emerald-700 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={handleCreateSubmit} className="p-6 overflow-y-auto space-y-5">
+              {/* Type Switcher */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-2">
+                  Hình thức đăng bài
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPostMode('external')}
+                    className={`p-3.5 rounded-2xl border text-left transition-all flex items-center space-x-3 cursor-pointer ${
+                      postMode === 'external'
+                        ? 'bg-sky-50 border-sky-500 ring-2 ring-sky-200'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center shrink-0">
+                      <Link2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-extrabold text-xs text-sky-950">
+                        Chia sẻ link Báo chí / Internet
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Dán URL bài báo (Báo Đắk Lắk, GD&TĐ...)
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPostMode('internal')}
+                    className={`p-3.5 rounded-2xl border text-left transition-all flex items-center space-x-3 cursor-pointer ${
+                      postMode === 'internal'
+                        ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-200'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-extrabold text-xs text-emerald-950">
+                        Tự soạn bài viết nhà trường
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Soạn văn bản thông báo hoặc tin nội bộ
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* External Link Fields */}
+              {postMode === 'external' && (
+                <div className="bg-sky-50/70 border border-sky-200 rounded-2xl p-4 space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-sky-950 uppercase tracking-wide mb-1">
+                      Đường link chia sẻ (URL bài báo/internet) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="url"
+                      required={postMode === 'external'}
+                      value={externalUrl}
+                      onChange={(e) => setExternalUrl(e.target.value)}
+                      placeholder="https://baodaklak.vn/giao-duc/..."
+                      className="w-full bg-white border border-sky-300 focus:border-sky-600 rounded-xl px-3.5 py-2 text-xs text-slate-900 shadow-2xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-sky-950 uppercase tracking-wide mb-1">
+                      Tên nguồn bài viết / Tòa soạn
+                    </label>
+                    <input
+                      type="text"
+                      value={sourceName}
+                      onChange={(e) => setSourceName(e.target.value)}
+                      placeholder="VD: Báo Đắk Lắk, Báo Giáo Dục & Thời Đại..."
+                      className="w-full bg-white border border-sky-300 focus:border-sky-600 rounded-xl px-3.5 py-2 text-xs text-slate-900 shadow-2xs mb-2"
+                    />
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] text-slate-500 font-semibold mr-1">Gợi ý nhanh:</span>
+                      {SOURCE_PRESETS.map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setSourceName(preset)}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
+                            sourceName === preset
+                              ? 'bg-sky-600 text-white'
+                              : 'bg-white border border-sky-200 text-sky-800 hover:bg-sky-100'
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Title */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                  Tiêu đề bài viết <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Nhập tiêu đề tin tức hoặc tiêu đề bài báo..."
+                  className="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-xl px-3.5 py-2.5 text-xs font-semibold text-slate-900"
+                />
+              </div>
+
+              {/* Category & Date */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    Chuyên mục
+                  </label>
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-xl px-3.5 py-2 text-xs text-slate-900"
+                  >
+                    <option value="tin-tuc">Tin Tức / Tin Báo Chí</option>
+                    <option value="thong-bao">Thông Báo</option>
+                    <option value="hoat-dong">Sự Kiện</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    Ngày đăng
+                  </label>
+                  <input
+                    type="text"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-xl px-3.5 py-2 text-xs text-slate-900"
+                  />
+                </div>
+              </div>
+
+              {/* Summary */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                  Tóm tắt / Lời dẫn giới thiệu <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  value={summary}
+                  onChange={(e) => setSummary(e.target.value)}
+                  placeholder="Đoạn văn ngắn tóm tắt nội dung chính của bài viết..."
+                  className="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-xl px-3.5 py-2 text-xs text-slate-900 leading-relaxed"
+                />
+              </div>
+
+              {/* Full Content (optional if external) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                  Nội dung chi tiết {postMode === 'external' ? '(Trích đoạn / Tùy chọn)' : '(Toàn văn)'}
+                </label>
+                <textarea
+                  rows={4}
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  placeholder={
+                    postMode === 'external'
+                      ? 'Dán một số đoạn trích quan trọng từ bài báo nếu muốn người đọc xem trước...'
+                      : 'Nhập toàn bộ nội dung bài viết...'
+                  }
+                  className="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-xl px-3.5 py-2 text-xs text-slate-900 leading-relaxed"
+                />
+              </div>
+
+              {/* Image URL & Presets */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                  Link ảnh minh họa
+                </label>
+                <input
+                  type="url"
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  placeholder="https://images.unsplash.com/..."
+                  className="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-xl px-3.5 py-2 text-xs text-slate-900 mb-2"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] text-slate-500 font-semibold">Ảnh mẫu:</span>
+                  {PRESET_NEWS_IMAGES.map((preset) => (
+                    <button
+                      key={preset.name}
+                      type="button"
+                      onClick={() => setImageUrl(preset.url)}
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
+                        imageUrl === preset.url
+                          ? 'bg-emerald-700 text-white'
+                          : 'bg-slate-100 text-slate-700 hover:bg-emerald-100'
+                      }`}
+                    >
+                      {preset.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Pinned to Home option */}
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-xs text-amber-950 flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                    <span>Ghim nổi bật bài này lên Trang Chủ</span>
+                  </div>
+                  <div className="text-[11px] text-amber-800">
+                    Bài viết sẽ xuất hiện ở vị trí tiêu điểm trên trang chủ website.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={isFeatured}
+                  onChange={(e) => setIsFeatured(e.target.checked)}
+                  className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="pt-2 flex items-center justify-end space-x-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl shadow-md transition-colors flex items-center space-x-1.5 cursor-pointer"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  <span>{postMode === 'external' ? 'Đăng Bài Chia Sẻ' : 'Đăng Bài Viết'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
