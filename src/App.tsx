@@ -731,6 +731,40 @@ export default function App() {
     setTimeout(() => setAdminNotice(null), 3500);
   };
 
+  // Đăng tin / chia sẻ liên kết: chỉ xác nhận thành công sau khi Firestore đã lưu.
+  const handleAddNews = async (newNews: Omit<NewsItem, 'id'>): Promise<boolean> => {
+    if (!isAdmin) {
+      setAdminNotice('Bạn cần đăng nhập quản trị để đăng bài.');
+      return false;
+    }
+    const item: NewsItem = { ...newNews, id: `news-${Date.now()}` };
+    const nextContent: SiteContent = { ...content, news: [item, ...content.news] };
+
+    if (isPreviewMode) {
+      setContent(nextContent);
+      setAdminNotice(`[Xem trước] Đã tạo bài "${item.title}" trong dữ liệu mẫu.`);
+      return true;
+    }
+
+    if (!onlineEnabled || !isOnlineAuthenticated()) {
+      setAdminNotice('Chưa đăng: cần đăng nhập tài khoản quản trị Firebase.');
+      return false;
+    }
+
+    setAdminNotice('Đang lưu bài viết lên Firebase...');
+    try {
+      await saveOnlineContent(nextContent);
+      setContent(nextContent);
+      setAdminNotice(`Đã đăng và lưu lên Firebase: "${item.title}".`);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Lỗi không xác định';
+      console.error('Không thể đăng tin lên Firebase:', error);
+      setAdminNotice(`CHƯA đăng bài: ${message}`);
+      return false;
+    }
+  };
+
   // Document download counter
   const handleIncrementDownload = (docId: string) => {
     const updatedDocs = content.documents.map((d) =>
@@ -913,6 +947,7 @@ export default function App() {
             onEditCard={handleOpenEditCard}
             selectedNews={selectedNews}
             onSelectNews={setSelectedNews}
+            onAddNews={handleAddNews}
           />
         )}
 
