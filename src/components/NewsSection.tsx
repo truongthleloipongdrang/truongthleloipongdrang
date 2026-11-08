@@ -28,7 +28,7 @@ interface NewsSectionProps {
   selectedNews: NewsItem | null;
   onSelectNews: (news: NewsItem | null) => void;
   onToggleFeatureNews?: (newsId: string) => void;
-  onAddNews?: (news: Omit<NewsItem, 'id'>) => void;
+  onAddNews?: (news: Omit<NewsItem, 'id'>) => Promise<boolean> | boolean;
   onDeleteNews?: (newsId: string) => void;
 }
 
@@ -74,6 +74,8 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  const [isSubmittingNews, setIsSubmittingNews] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   // Form states for creating news
   const [postMode, setPostMode] = useState<'internal' | 'external'>('external');
@@ -131,8 +133,10 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
     setIsFeatured(false);
   };
 
-  const handleCreateSubmit = (e: React.FormEvent) => {
+  const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingNews) return;
+    setCreateError('');
     if (!title.trim()) return;
 
     const categoryLabels: Record<string, string> = {
@@ -156,9 +160,24 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
       sourceName: postMode === 'external' ? sourceName.trim() : undefined,
     };
 
-    onAddNews?.(newNewsItem);
-    handleResetForm();
-    setShowCreateModal(false);
+    if (!onAddNews) {
+      setCreateError('Chức năng đăng tin chưa được kết nối với ứng dụng.');
+      return;
+    }
+    setIsSubmittingNews(true);
+    try {
+      const saved = await onAddNews(newNewsItem);
+      if (!saved) {
+        setCreateError('Bài chưa được lưu lên Firebase. Vui lòng kiểm tra thông báo lỗi và thử lại.');
+        return;
+      }
+      handleResetForm();
+      setShowCreateModal(false);
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : 'Không thể lưu bài viết.');
+    } finally {
+      setIsSubmittingNews(false);
+    }
   };
 
   return (
@@ -843,6 +862,12 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                 />
               </div>
 
+              {/* Tránh báo thành công khi Firestore chưa xác nhận việc lưu. */}
+              {createError && (
+                <p role="alert" className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  {createError}
+                </p>
+              )}
               {/* Actions */}
               <div className="pt-2 flex items-center justify-end space-x-3 border-t border-slate-100">
                 <button
@@ -854,10 +879,11 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-extrabold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl shadow-md transition-colors flex items-center space-x-1.5 cursor-pointer"
+                  disabled={isSubmittingNews}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 disabled:cursor-wait rounded-xl shadow-md transition-colors flex items-center space-x-1.5 cursor-pointer"
                 >
                   <CheckCircle className="w-4 h-4" />
-                  <span>{postMode === 'external' ? 'Đăng Bài Chia Sẻ' : 'Đăng Bài Viết'}</span>
+                  <span>{isSubmittingNews ? 'Đang lưu lên Firebase...' : postMode === 'external' ? 'Đăng Bài Chia Sẻ' : 'Đăng Bài Viết'}</span>
                 </button>
               </div>
             </form>
