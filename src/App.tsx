@@ -450,6 +450,12 @@ export default function App() {
                   imageUrl: updatedCard.imageUrl || n.imageUrl,
                   date: updatedCard.extraField1Value || n.date,
                   author: updatedCard.extraField2Value || n.author,
+                  // Keep the home-page pin switch from the universal news editor.
+                  isFeatured: updatedCard.isFeatured ?? n.isFeatured,
+                  // Keep original external-link metadata when editing a shared news item.
+                  isExternalLink: updatedCard.isExternalLink ?? n.isExternalLink,
+                  externalUrl: updatedCard.externalUrl ?? n.externalUrl,
+                  sourceName: updatedCard.sourceName ?? n.sourceName,
                 }
               : n
           );
@@ -731,6 +737,49 @@ export default function App() {
     setTimeout(() => setAdminNotice(null), 3500);
   };
 
+  // Ghim / bỏ ghim tin nổi bật: must persist in the same publicContent document
+  // as regular news. Do not report success until Firebase confirms the write.
+  const handleToggleFeatureNews = async (newsId: string): Promise<void> => {
+    if (!isAdmin) {
+      setAdminNotice('Bạn cần đăng nhập quản trị để ghim tin nổi bật.');
+      return;
+    }
+
+    const current = content.news.find((news) => news.id === newsId);
+    if (!current) {
+      setAdminNotice('Không tìm thấy bài viết cần ghim.');
+      return;
+    }
+    const nextFeatured = !Boolean(current.isFeatured);
+    const nextContent: SiteContent = {
+      ...content,
+      news: content.news.map((news) =>
+        news.id === newsId ? { ...news, isFeatured: nextFeatured } : news
+      ),
+    };
+
+    if (isPreviewMode) {
+      setContent(nextContent);
+      setAdminNotice(`[Xem trước] ${nextFeatured ? 'Đã ghim' : 'Đã bỏ ghim'} bài viết trong dữ liệu mẫu.`);
+      return;
+    }
+    if (!onlineEnabled || !isOnlineAuthenticated()) {
+      setAdminNotice('Chưa lưu ghim: cần đăng nhập quản trị Firebase.');
+      return;
+    }
+
+    setAdminNotice('Đang lưu trạng thái ghim lên Firebase...');
+    try {
+      await saveOnlineContent(nextContent);
+      setContent(nextContent);
+      setAdminNotice(`${nextFeatured ? 'Đã ghim' : 'Đã bỏ ghim'} bài viết trên trang chủ và lưu lên Firebase.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Lỗi không xác định';
+      console.error('Không lưu được trạng thái ghim:', error);
+      setAdminNotice(`CHƯA lưu ghim lên Firebase: ${message}`);
+    }
+  };
+
   // Đăng tin / chia sẻ liên kết: chỉ xác nhận thành công sau khi Firestore đã lưu.
   const handleAddNews = async (newNews: Omit<NewsItem, 'id'>): Promise<boolean> => {
     if (!isAdmin) {
@@ -921,6 +970,7 @@ export default function App() {
               setSelectedNews(news);
               setCurrentSection('news');
             }}
+            onToggleFeatureNews={handleToggleFeatureNews}
           />
         )}
 
@@ -947,6 +997,7 @@ export default function App() {
             onEditCard={handleOpenEditCard}
             selectedNews={selectedNews}
             onSelectNews={setSelectedNews}
+            onToggleFeatureNews={handleToggleFeatureNews}
             onAddNews={handleAddNews}
           />
         )}
