@@ -18,6 +18,8 @@ import {
   Sparkles,
   CheckCircle,
   FileText,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { NewsItem, EditableCardPayload } from '../types';
 
@@ -28,7 +30,7 @@ interface NewsSectionProps {
   selectedNews: NewsItem | null;
   onSelectNews: (news: NewsItem | null) => void;
   onToggleFeatureNews?: (newsId: string) => void;
-  onAddNews?: (news: Omit<NewsItem, 'id'>) => Promise<boolean> | boolean;
+  onAddNews?: (news: Omit<NewsItem, 'id'>) => Promise<boolean | void> | void;
   onDeleteNews?: (newsId: string) => void;
 }
 
@@ -74,8 +76,8 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [isSubmittingNews, setIsSubmittingNews] = useState(false);
-  const [createError, setCreateError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string>('');
 
   // Form states for creating news
   const [postMode, setPostMode] = useState<'internal' | 'external'>('external');
@@ -123,6 +125,15 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
 
   const featured = newsList.find((n) => n.isFeatured) || newsList[0];
 
+  // Khung tin nổi bật lớn chỉ hiển thị ở danh mục 'Tất Cả' và khi không có từ khóa tìm kiếm
+  const isFeaturedBannerVisible = Boolean(featured && selectedCategory === 'all' && !searchTerm.trim());
+
+  // Danh sách thẻ tin tức hiển thị ở lưới bên dưới:
+  // Tự động loại trừ bài đang hiển thị trong khung nổi bật lớn phía trên để tránh bị lặp lại 2 lần
+  const displayedNewsList = isFeaturedBannerVisible && featured
+    ? filteredNews.filter((item) => item.id !== featured.id)
+    : filteredNews;
+
   const handleResetForm = () => {
     setTitle('');
     setExternalUrl('');
@@ -131,13 +142,29 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
     setContent('');
     setImageUrl(PRESET_NEWS_IMAGES[0].url);
     setIsFeatured(false);
+    setSubmitError('');
   };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmittingNews) return;
-    setCreateError('');
-    if (!title.trim()) return;
+    setSubmitError('');
+
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      setSubmitError('Vui lòng nhập tiêu đề bài viết.');
+      return;
+    }
+
+    let cleanUrl = externalUrl.trim();
+    if (postMode === 'external') {
+      if (!cleanUrl) {
+        setSubmitError('Vui lòng dán đường link (URL) bài báo hoặc bài viết cần chia sẻ.');
+        return;
+      }
+      if (!/^https?:\/\//i.test(cleanUrl)) {
+        cleanUrl = `https://${cleanUrl}`;
+      }
+    }
 
     const categoryLabels: Record<string, string> = {
       'thong-bao': 'Thông Báo',
@@ -145,38 +172,41 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
       'hoat-dong': 'Sự Kiện',
     };
 
+    const finalSummary = summary.trim() || trimmedTitle;
+    const finalContent = content.trim() || finalSummary;
+
     const newNewsItem: Omit<NewsItem, 'id'> = {
-      title: title.trim(),
+      title: trimmedTitle,
       category,
-      categoryLabel: categoryLabels[category] || 'Tin Tức',
-      summary: summary.trim() || title.trim(),
-      content: content.trim() || summary.trim() || title.trim(),
+      categoryLabel:
+        categoryLabels[category] || (postMode === 'external' ? 'Tin Báo Chí' : 'Tin Tức'),
+      summary: finalSummary,
+      content: finalContent,
       imageUrl: imageUrl.trim() || PRESET_NEWS_IMAGES[0].url,
-      date,
-      author: postMode === 'external' ? (sourceName ? `Nguồn: ${sourceName}` : author) : author,
+      date: date.trim() || new Date().toLocaleDateString('vi-VN'),
+      author:
+        postMode === 'external'
+          ? (sourceName.trim() ? `Nguồn: ${sourceName.trim()}` : author)
+          : author,
       isFeatured,
       isExternalLink: postMode === 'external',
-      externalUrl: postMode === 'external' ? externalUrl.trim() : undefined,
-      sourceName: postMode === 'external' ? sourceName.trim() : undefined,
+      externalUrl: postMode === 'external' ? cleanUrl : undefined,
+      sourceName: postMode === 'external' ? (sourceName.trim() || 'Internet') : undefined,
     };
 
-    if (!onAddNews) {
-      setCreateError('Chức năng đăng tin chưa được kết nối với ứng dụng.');
-      return;
-    }
-    setIsSubmittingNews(true);
+    setIsSubmitting(true);
     try {
-      const saved = await onAddNews(newNewsItem);
-      if (!saved) {
-        setCreateError('Bài chưa được lưu lên Firebase. Vui lòng kiểm tra thông báo lỗi và thử lại.');
-        return;
+      if (onAddNews) {
+        await onAddNews(newNewsItem);
       }
       handleResetForm();
       setShowCreateModal(false);
-    } catch (error) {
-      setCreateError(error instanceof Error ? error.message : 'Không thể lưu bài viết.');
+    } catch (err: any) {
+      setSubmitError(
+        err?.message || 'Có lỗi xảy ra khi lưu bài viết lên hệ thống. Vui lòng kiểm tra lại kết nối.'
+      );
     } finally {
-      setIsSubmittingNews(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -240,7 +270,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
       </div>
 
       {/* 3. Featured News Banner */}
-      {featured && selectedCategory === 'all' && !searchTerm && (
+      {isFeaturedBannerVisible && featured && (
         <div className="relative group bg-white border border-slate-200 hover:border-emerald-500 rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all">
           {isAdmin && (
             <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
@@ -373,7 +403,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
 
       {/* 4. News List Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredNews.map((news) => (
+        {displayedNewsList.map((news) => (
           <div
             key={news.id}
             className={`relative group bg-white border rounded-2xl overflow-hidden shadow-xs hover:shadow-lg transition-all flex flex-col justify-between ${
@@ -634,6 +664,16 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
 
             {/* Modal Body */}
             <form onSubmit={handleCreateSubmit} className="p-6 overflow-y-auto space-y-5">
+              {submitError && (
+                <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4 flex items-start space-x-3 text-red-900 animate-in fade-in duration-200">
+                  <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                  <div className="text-xs space-y-1">
+                    <div className="font-extrabold text-red-800">Không thể đăng bài viết</div>
+                    <p className="leading-relaxed">{submitError}</p>
+                  </div>
+                </div>
+              )}
+
               {/* Type Switcher */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-2">
@@ -642,6 +682,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
+                    disabled={isSubmitting}
                     onClick={() => setPostMode('external')}
                     className={`p-3.5 rounded-2xl border text-left transition-all flex items-center space-x-3 cursor-pointer ${
                       postMode === 'external'
@@ -664,6 +705,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
 
                   <button
                     type="button"
+                    disabled={isSubmitting}
                     onClick={() => setPostMode('internal')}
                     className={`p-3.5 rounded-2xl border text-left transition-all flex items-center space-x-3 cursor-pointer ${
                       postMode === 'internal'
@@ -694,7 +736,8 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                       Đường link chia sẻ (URL bài báo/internet) <span className="text-red-500">*</span>
                     </label>
                     <input
-                      type="url"
+                      type="text"
+                      disabled={isSubmitting}
                       required={postMode === 'external'}
                       value={externalUrl}
                       onChange={(e) => setExternalUrl(e.target.value)}
@@ -709,6 +752,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                     </label>
                     <input
                       type="text"
+                      disabled={isSubmitting}
                       value={sourceName}
                       onChange={(e) => setSourceName(e.target.value)}
                       placeholder="VD: Báo Đắk Lắk, Báo Giáo Dục & Thời Đại..."
@@ -720,6 +764,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                         <button
                           key={preset}
                           type="button"
+                          disabled={isSubmitting}
                           onClick={() => setSourceName(preset)}
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
                             sourceName === preset
@@ -742,6 +787,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                 </label>
                 <input
                   type="text"
+                  disabled={isSubmitting}
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
@@ -757,6 +803,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                     Chuyên mục
                   </label>
                   <select
+                    disabled={isSubmitting}
                     value={category}
                     onChange={(e) => setCategory(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-xl px-3.5 py-2 text-xs text-slate-900"
@@ -772,6 +819,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                   </label>
                   <input
                     type="text"
+                    disabled={isSubmitting}
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-xl px-3.5 py-2 text-xs text-slate-900"
@@ -786,6 +834,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                 </label>
                 <textarea
                   rows={3}
+                  disabled={isSubmitting}
                   required
                   value={summary}
                   onChange={(e) => setSummary(e.target.value)}
@@ -801,6 +850,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                 </label>
                 <textarea
                   rows={4}
+                  disabled={isSubmitting}
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                   placeholder={
@@ -818,7 +868,8 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                   Link ảnh minh họa
                 </label>
                 <input
-                  type="url"
+                  type="text"
+                  disabled={isSubmitting}
                   value={imageUrl}
                   onChange={(e) => setImageUrl(e.target.value)}
                   placeholder="https://images.unsplash.com/..."
@@ -830,6 +881,7 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                     <button
                       key={preset.name}
                       type="button"
+                      disabled={isSubmitting}
                       onClick={() => setImageUrl(preset.url)}
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
                         imageUrl === preset.url
@@ -856,34 +908,42 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
                 </div>
                 <input
                   type="checkbox"
+                  disabled={isSubmitting}
                   checked={isFeatured}
                   onChange={(e) => setIsFeatured(e.target.checked)}
                   className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
                 />
               </div>
 
-              {/* Tránh báo thành công khi Firestore chưa xác nhận việc lưu. */}
-              {createError && (
-                <p role="alert" className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-                  {createError}
-                </p>
-              )}
               {/* Actions */}
               <div className="pt-2 flex items-center justify-end space-x-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setShowCreateModal(false);
+                    setSubmitError('');
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50 rounded-xl transition-colors cursor-pointer"
                 >
                   Hủy bỏ
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmittingNews}
-                  className="px-5 py-2 text-xs font-extrabold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 disabled:cursor-wait rounded-xl shadow-md transition-colors flex items-center space-x-1.5 cursor-pointer"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-400 disabled:cursor-not-allowed rounded-xl shadow-md transition-colors flex items-center space-x-1.5 cursor-pointer"
                 >
-                  <CheckCircle className="w-4 h-4" />
-                  <span>{isSubmittingNews ? 'Đang lưu lên Firebase...' : postMode === 'external' ? 'Đăng Bài Chia Sẻ' : 'Đăng Bài Viết'}</span>
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                      <span>Đang Lưu Lên Firebase...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" />
+                      <span>{postMode === 'external' ? 'Đăng Bài Chia Sẻ' : 'Đăng Bài Viết'}</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
