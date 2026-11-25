@@ -149,17 +149,17 @@ export const Navbar: React.FC<NavbarProps> = ({
   const pendingCount = registrations.filter((r) => r.status === 'pending').length;
   const pendingFeedbackCount = feedbackList.filter((f) => f.status === 'pending').length;
 
-  const navItems: { id: NavSection; label: string; icon: React.FC<{ className?: string }> }[] = [
-    { id: 'home', label: 'Trang Chủ', icon: Home },
-    { id: 'about', label: 'Giới Thiệu', icon: Info },
-    { id: 'staff', label: 'BGH - Đội Ngũ', icon: Users },
-    { id: 'news', label: 'Tin Tức', icon: Newspaper },
-    { id: 'activities', label: 'Hoạt Động', icon: Sparkles },
-    { id: 'tuyen-sinh' as unknown as NavSection, label: 'Tuyển Sinh', icon: GraduationCap },
-    { id: 'student-lookup', label: 'Tra Cứu', icon: Search },
-    { id: 'documents', label: 'Tài Liệu', icon: BookOpen },
-    { id: 'gallery', label: 'Thư Viện Ảnh', icon: Image },
-    { id: 'contact', label: 'Liên Hệ', icon: Phone },
+  const navItems: { id: NavSection; label: string; href: string; icon: React.FC<{ className?: string }> }[] = [
+    { id: 'home', label: 'Trang Chủ', href: './', icon: Home },
+    { id: 'about', label: 'Giới Thiệu', href: '#gioi-thieu', icon: Info },
+    { id: 'staff', label: 'BGH - Đội Ngũ', href: '#ban-giam-hieu', icon: Users },
+    { id: 'news', label: 'Tin Tức', href: '#tin-tuc', icon: Newspaper },
+    { id: 'activities', label: 'Hoạt Động', href: '#hoat-dong', icon: Sparkles },
+    { id: 'tuyen-sinh' as unknown as NavSection, label: 'Tuyển Sinh', href: '#tuyen-sinh', icon: GraduationCap },
+    { id: 'student-lookup', label: 'Tra Cứu', href: '#tra-cuu', icon: Search },
+    { id: 'documents', label: 'Tài Liệu', href: '#tai-lieu', icon: BookOpen },
+    { id: 'gallery', label: 'Thư Viện Ảnh', href: '#thu-vien-anh', icon: Image },
+    { id: 'contact', label: 'Liên Hệ', href: '#lien-he', icon: Phone },
   ];
 
   const handleNavClick = (id: NavSection | string) => {
@@ -611,9 +611,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="block text-[10px] sm:text-xs uppercase tracking-widest text-emerald-800 font-bold whitespace-nowrap">
                 CỔNG THÔNG TIN ĐIỆN TỬ
               </span>
-              <h1 className="text-base sm:text-lg lg:text-xl font-extrabold text-slate-900 tracking-tight leading-tight group-hover:text-emerald-700 transition-colors whitespace-nowrap">
+              <div className="text-base sm:text-lg lg:text-xl font-extrabold text-slate-900 tracking-tight leading-tight group-hover:text-emerald-700 transition-colors whitespace-nowrap">
                 {schoolInfo.name}
-              </h1>
+              </div>
               <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium hidden sm:block whitespace-nowrap">
                 Xã Pơng Drang - Tỉnh Đắk Lắk
               </p>
@@ -667,7 +667,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-12">
             {/* Desktop Navigation Links with Icons & Elegant Active Indicators */}
-            <nav className="flex items-center space-x-1 xl:space-x-2 w-full justify-start">
+            <nav aria-label="Điều hướng chính" className="flex items-center space-x-1 xl:space-x-2 w-full justify-start">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive =
@@ -675,9 +675,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                   (item.id === ('tuyen-sinh' as unknown as NavSection) &&
                     currentSection === 'admissions');
                 return (
-                  <button
+                  <a
                     key={item.id}
-                    onClick={() => handleNavClick(item.id)}
+                    href={item.href}
+                    aria-current={isActive ? 'page' : undefined}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleNavClick(item.id);
+                    }}
                     className={`group inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs xl:text-[13px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
                       isActive
                         ? 'bg-gradient-to-r from-emerald-700 to-teal-800 text-white font-bold shadow-xs shadow-emerald-900/20'
@@ -692,7 +697,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       }`}
                     />
                     <span>{item.label}</span>
-                  </button>
+                  </a>
                 );
               })}
             </nav>
@@ -716,7 +721,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </form>
 
-          <div className="grid grid-cols-2 gap-2">
+          <nav aria-label="Điều hướng di động" className="grid grid-cols-2 gap-2">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive =
@@ -724,9 +729,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                 (item.id === ('tuyen-sinh' as unknown as NavSection) &&
                   currentSection === 'admissions');
               return (
-                <button
+                <a
                   key={item.id}
-                  onClick={() => handleNavClick(item.id)}
+                  href={item.href}
+                  aria-current={isActive ? 'page' : undefined}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleNavClick(item.id);
+                  }}
                   className={`flex items-center space-x-2 text-left px-3 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
                     isActive
                       ? 'bg-emerald-700 text-white font-bold'
@@ -735,10 +745,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 >
                   <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-amber-300' : 'text-slate-500'}`} />
                   <span className="truncate">{item.label}</span>
-                </button>
+                </a>
               );
             })}
-          </div>
+          </nav>
 
           <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col space-y-2">
             {!currentMember ? (

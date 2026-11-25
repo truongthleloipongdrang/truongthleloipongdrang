@@ -218,10 +218,10 @@ export const NewsSection: React.FC<NewsSectionProps> = ({
           <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-700 bg-emerald-100/80 px-3 py-1 rounded-full">
             BẢN TIN GIÁO DỤC
           </span>
-          <h2 className="text-3xl font-black text-slate-900 mt-2 flex items-center gap-2">
+          <h1 className="text-3xl font-black text-slate-900 mt-2 flex items-center gap-2">
             <Newspaper className="w-8 h-8 text-emerald-700" />
             Tin Tức & Thông Báo <span className="inline-block whitespace-nowrap">Trường Lê Lợi</span>
-          </h2>
+          </h1>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">

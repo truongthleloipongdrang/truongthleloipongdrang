@@ -68,9 +68,9 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
         <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-700 bg-emerald-100/80 px-3 py-1 rounded-full">
           PHONG TRÀO THI ĐUA
         </span>
-        <h2 className="text-3xl sm:text-4xl font-black text-slate-900">
+        <h1 className="text-3xl sm:text-4xl font-black text-slate-900">
           Hoạt Động Giáo Dục & Trải Nghiệm Học Đường
-        </h2>
+        </h1>
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
           Đổi mới phương pháp dạy học, phát triển kỹ năng toàn diện, lan tỏa văn
           hóa bản sắc Tây Nguyên và tiên phong chuyển đổi số học đường.

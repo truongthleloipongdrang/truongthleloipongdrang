@@ -1,74 +1,71 @@
 import { NavSection } from './types';
 
+const CANONICAL_BASE_URL = 'https://truongthleloipongdrang.github.io/truongthleloipongdrang/';
+
 const SECTION_SEO_TITLES: Record<NavSection, { title: string; desc: string }> = {
   home: {
-    title: 'Trường Tiểu Học Lê Lợi - Pơng Drang, Đắk Lắk | Cổng Thông Tin Điện Tử',
-    desc: 'Cổng thông tin điện tử Trường Tiểu Học Lê Lợi, Xã Pơng Drang, Tỉnh Đắk Lắk. Môi trường giáo dục thân thiện, chất lượng cao giữa đại ngàn Tây Nguyên.',
+    title: 'Trường Tiểu học Lê Lợi – Pơng Drang, Đắk Lắk',
+    desc: 'Website Trường Tiểu học Lê Lợi, xã Pơng Drang, tỉnh Đắk Lắk. Cập nhật tin tức, thông báo, tuyển sinh lớp 1, hoạt động giáo dục và thông tin nhà trường.',
   },
   about: {
-    title: 'Giới Thiệu Lịch Sử, Sứ Mệnh & Cơ Sở Vật Chất | Tiểu Học Lê Lợi Pơng Drang',
-    desc: 'Tìm hiểu lịch sử phát triển, sứ mệnh, tầm nhìn, giá trị cốt lõi và hệ thống cơ sở vật chất khang trang gồm trường chính và 2 phân hiệu của TH Lê Lợi.',
+    title: 'Giới Thiệu Trường Tiểu học Lê Lợi – Pơng Drang, Đắk Lắk',
+    desc: 'Tìm hiểu lịch sử hình thành, sứ mệnh, tầm nhìn, giá trị cốt lõi và cơ sở vật chất gồm trường chính Thôn Ea Tút cùng 2 phân hiệu của Trường Tiểu học Lê Lợi.',
   },
   staff: {
-    title: 'Ban Giám Hiệu & Đội Ngũ Giáo Viên | Trường Tiểu Học Lê Lợi - Đắk Lắk',
-    desc: 'Đội ngũ Ban Giám hiệu tận tâm: Thầy Nguyễn Thanh Bình (Hiệu trưởng), Cô Đỗ Thị Phục, Thầy Trần Mạnh Thắng (Phó Hiệu trưởng) cùng tập thể thầy cô giáo yêu nghề.',
+    title: 'Ban Giám Hiệu & Đội Ngũ Giáo Viên | Trường Tiểu học Lê Lợi',
+    desc: 'Thông tin Ban Giám hiệu và đội ngũ giáo viên các tổ chuyên môn, tổ văn phòng tại Trường Tiểu học Lê Lợi, xã Pơng Drang, tỉnh Đắk Lắk.',
   },
   news: {
-    title: 'Tin Tức & Thông Báo Mới Nhất | Trường Tiểu Học Lê Lợi Pơng Drang',
-    desc: 'Cập nhật kịp thời tin tức giáo dục, thông báo học vụ, lịch thi, sinh hoạt chuyên môn và sự kiện nổi bật của thầy và trò trường Tiểu học Lê Lợi.',
+    title: 'Tin Tức & Thông Báo | Trường Tiểu học Lê Lợi Pơng Drang',
+    desc: 'Cập nhật tin tức giáo dục, thông báo học vụ, thời khóa biểu, lịch kiểm tra và sự kiện mới nhất của Trường Tiểu học Lê Lợi, xã Pơng Drang, Đắk Lắk.',
   },
   activities: {
-    title: 'Hoạt Động Giáo Dục, Trải Nghiệm & STEM | Tiểu Học Lê Lợi',
-    desc: 'Tổng hợp các hoạt động dạy học tích hợp STEM, sinh hoạt Đội TNTP, câu lạc bộ cồng chiêng bản sắc và phong trào chuyển đổi số học đường.',
+    title: 'Hoạt Động Giáo Dục & STEM | Trường Tiểu học Lê Lợi',
+    desc: 'Các hoạt động dạy học, giáo dục STEM, trải nghiệm học đường, phong trào Đội TNTP, văn nghệ, thể thao và chuyển đổi số tại Trường Tiểu học Lê Lợi.',
   },
   admissions: {
-    title: 'Tuyển Sinh Lớp 1 Năm Học Mới | Trường Tiểu Học Lê Lợi - Pơng Drang',
-    desc: 'Kế hoạch tuyển sinh vào lớp 1 trường Tiểu học Lê Lợi xã Pơng Drang: Đối tượng, chỉ tiêu, hồ sơ cần chuẩn bị và thời gian tiếp nhận chi tiết.',
+    title: 'Tuyển Sinh Lớp 1 | Trường Tiểu học Lê Lợi Pơng Drang',
+    desc: 'Thông tin tuyển sinh lớp 1 Trường Tiểu học Lê Lợi, xã Pơng Drang, tỉnh Đắk Lắk: đối tượng, chỉ tiêu, hồ sơ, lịch tiếp nhận và hotline 02623600344.',
   },
   'student-lookup': {
-    title: 'Tra Cứu Thông Tin Học Sinh An Toàn | Trường Tiểu Học Lê Lợi',
-    desc: 'Cổng tra cứu kết quả rèn luyện học tập và thi đua của học sinh theo mã định danh học đường an toàn, minh bạch, bảo vệ quyền riêng tư.',
+    title: 'Tra Cứu Học Sinh | Trường Tiểu học Lê Lợi Pơng Drang',
+    desc: 'Chuyên mục tra cứu thông tin và đánh giá rèn luyện học sinh Trường Tiểu học Lê Lợi theo quy định bảo mật quyền riêng tư cho phụ huynh và học sinh.',
   },
   documents: {
-    title: 'Kho Tài Liệu, Giáo Án & Đề Thi | Trường Tiểu Học Lê Lợi Pơng Drang',
-    desc: 'Kho học liệu số dành cho giáo viên và học sinh: Giáo án GDPT 2018, ma trận đề thi, thông tư văn bản và bài giảng điện tử tương tác.',
+    title: 'Tài Liệu Chuyên Môn & Học Liệu | Trường Tiểu học Lê Lợi',
+    desc: 'Kho tài liệu chuyên môn, kế hoạch bài dạy, thời khóa biểu, văn bản chỉ đạo và học liệu dùng chung của Trường Tiểu học Lê Lợi, xã Pơng Drang, Đắk Lắk.',
   },
   gallery: {
-    title: 'Thư Viện Ảnh Hoạt Động & Cơ Sở Vật Chất | Tiểu Học Lê Lợi',
-    desc: 'Hình ảnh chân thực về các hoạt động văn nghệ, thể thao, hội thi và vẻ đẹp rực rỡ của ngôi trường giữa vùng đất cà phê bạt ngàn Pơng Drang.',
+    title: 'Thư Viện Ảnh | Trường Tiểu học Lê Lợi Pơng Drang',
+    desc: 'Hình ảnh hoạt động dạy học, trải nghiệm, sự kiện nhà trường và khuôn viên Trường Tiểu học Lê Lợi tại Thôn Ea Tút, xã Pơng Drang, tỉnh Đắk Lắk.',
   },
   contact: {
-    title: 'Liên Hệ & Địa Chỉ Trường Tiểu Học Lê Lợi | Pơng Drang, Đắk Lắk',
-    desc: 'Thông tin liên hệ Trường Tiểu học Lê Lợi: Xã Pơng Drang, Tỉnh Đắk Lắk. Hotline: 02623600344 - Email: truongthleloipongdrang@gmail.com.',
+    title: 'Liên Hệ & Địa Chỉ | Trường Tiểu học Lê Lợi Pơng Drang',
+    desc: 'Địa chỉ Trường Tiểu học Lê Lợi: Thôn Ea Tút, xã Pơng Drang, tỉnh Đắk Lắk. Số điện thoại: 02623600344. Email: truongthleloipongdrang@gmail.com.',
   },
 };
+
+function setMetaContent(selector: string, content: string) {
+  const el = document.querySelector(selector);
+  if (el) {
+    el.setAttribute('content', content);
+  }
+}
 
 export function updatePageSeo(section: NavSection) {
   const seoInfo = SECTION_SEO_TITLES[section] || SECTION_SEO_TITLES.home;
   document.title = seoInfo.title;
 
-  const metaDesc = document.querySelector('meta[name="description"]');
-  if (metaDesc) {
-    metaDesc.setAttribute('content', seoInfo.desc);
-  }
+  setMetaContent('meta[name="description"]', seoInfo.desc);
+  setMetaContent('meta[property="og:title"]', seoInfo.title);
+  setMetaContent('meta[property="og:description"]', seoInfo.desc);
+  setMetaContent('meta[property="og:url"]', CANONICAL_BASE_URL);
+  setMetaContent('meta[name="twitter:title"]', seoInfo.title);
+  setMetaContent('meta[name="twitter:description"]', seoInfo.desc);
+  setMetaContent('meta[name="twitter:url"]', CANONICAL_BASE_URL);
 
-  const ogTitle = document.querySelector('meta[property="og:title"]');
-  if (ogTitle) {
-    ogTitle.setAttribute('content', seoInfo.title);
-  }
-
-  const ogDesc = document.querySelector('meta[property="og:description"]');
-  if (ogDesc) {
-    ogDesc.setAttribute('content', seoInfo.desc);
-  }
-
-  const twitterTitle = document.querySelector('meta[name="twitter:title"]');
-  if (twitterTitle) {
-    twitterTitle.setAttribute('content', seoInfo.title);
-  }
-
-  const twitterDesc = document.querySelector('meta[name="twitter:description"]');
-  if (twitterDesc) {
-    twitterDesc.setAttribute('content', seoInfo.desc);
+  const canonical = document.querySelector('link[rel="canonical"]');
+  if (canonical) {
+    canonical.setAttribute('href', CANONICAL_BASE_URL);
   }
 }

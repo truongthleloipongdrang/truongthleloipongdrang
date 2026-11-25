@@ -39,9 +39,9 @@ export const AboutSection: React.FC<AboutSectionProps> = ({
         <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-700 bg-emerald-100/80 px-3 py-1 rounded-full">
           VỀ CHÚNG TÔI
         </span>
-        <h2 className="text-3xl sm:text-4xl font-black text-slate-900">
+        <h1 className="text-3xl sm:text-4xl font-black text-slate-900">
           Giới Thiệu <span className="inline-block whitespace-nowrap">Trường Tiểu Học Lê Lợi</span>
-        </h2>
+        </h1>
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
           Nơi hội tụ tình yêu thương, kỷ cương sư phạm và khát vọng vươn lên của
           con em các dân tộc anh em trên mảnh đất Pơng Drang, Đắk Lắk.
