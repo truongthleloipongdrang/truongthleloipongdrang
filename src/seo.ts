@@ -1,6 +1,7 @@
 import { NavSection } from './types';
 
 const CANONICAL_BASE_URL = 'https://truongthleloipongdrang.github.io/truongthleloipongdrang/';
+const SITE_NAME = 'Trường Tiểu học Lê Lợi';
 
 const SECTION_SEO_TITLES: Record<NavSection, { title: string; desc: string }> = {
   home: {
@@ -57,6 +58,7 @@ export function updatePageSeo(section: NavSection) {
   document.title = seoInfo.title;
 
   setMetaContent('meta[name="description"]', seoInfo.desc);
+  setMetaContent('meta[property="og:site_name"]', SITE_NAME);
   setMetaContent('meta[property="og:title"]', seoInfo.title);
   setMetaContent('meta[property="og:description"]', seoInfo.desc);
   setMetaContent('meta[property="og:url"]', CANONICAL_BASE_URL);
