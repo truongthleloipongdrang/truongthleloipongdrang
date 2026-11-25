@@ -160,10 +160,10 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
           <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-700 bg-emerald-100/80 px-3 py-1 rounded-full">
             KHO HỌC LIỆU SỐ
           </span>
-          <h2 className="text-3xl font-black text-slate-900 mt-2 flex items-center gap-2">
+          <h1 className="text-3xl font-black text-slate-900 mt-2 flex items-center gap-2">
             <BookOpen className="w-8 h-8 text-emerald-700" />
             Kho Tài Liệu Dùng Chung - <span className="inline-block whitespace-nowrap">Tiểu Học Lê Lợi</span>
-          </h2>
+          </h1>
           <p className="text-xs sm:text-sm text-slate-600 mt-1">
             Dành cho Ban Giám hiệu, Thầy cô giáo, Quý phụ huynh và các em Học sinh.
           </p>

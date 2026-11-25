@@ -169,9 +169,9 @@ export const AdmissionsSection: React.FC<AdmissionsSectionProps> = ({
         <span className="text-xs uppercase font-extrabold tracking-widest text-amber-800 bg-amber-100 border border-amber-300 px-3.5 py-1 rounded-full inline-block">
           {admissions.headerTag || `TUYỂN SINH NĂM HỌC ${admissions.academicYear}`}
         </span>
-        <h2 className="text-3xl sm:text-4xl font-black text-slate-900">
+        <h1 className="text-3xl sm:text-4xl font-black text-slate-900">
           {admissions.headerTitle || 'Kế Hoạch Tuyển Sinh Vào Lớp 1'}
-        </h2>
+        </h1>
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
           {admissions.headerDescription ||
             'Trường Tiểu học Lê Lợi nhiệt liệt chào đón các em học sinh bước vào lớp 1! Hãy cùng nhà trường chắp cánh cho những ước mơ đầu đời.'}

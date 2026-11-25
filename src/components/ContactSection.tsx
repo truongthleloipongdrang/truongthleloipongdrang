@@ -73,9 +73,9 @@ export const ContactSection: React.FC<ContactSectionProps> = ({
         <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-700 bg-emerald-100/80 px-3 py-1 rounded-full">
           KẾT NỐI NHÀ TRƯỜNG
         </span>
-        <h2 className="text-3xl sm:text-4xl font-black text-slate-900">
+        <h1 className="text-3xl sm:text-4xl font-black text-slate-900">
           Thông Tin Liên Hệ & Bản Đồ Điểm Trường
-        </h2>
+        </h1>
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
           Ban Giám hiệu và tập thể giáo viên Trường Tiểu học Lê Lợi luôn sẵn sàng
           lắng nghe và giải đáp mọi thắc mắc của quý phụ huynh và nhân dân.
@@ -143,7 +143,12 @@ export const ContactSection: React.FC<ContactSectionProps> = ({
             </div>
             <div className="flex items-center">
               <Mail className="w-4 h-4 mr-2 text-emerald-600 shrink-0" />
-              <span className="truncate">{schoolInfo.email}</span>
+              <a
+                href={`mailto:${schoolInfo.email}`}
+                className="truncate hover:underline"
+              >
+                {schoolInfo.email}
+              </a>
             </div>
           </div>
         </div>
@@ -196,7 +201,15 @@ export const ContactSection: React.FC<ContactSectionProps> = ({
             </div>
             <div className="flex items-center">
               <Phone className="w-4 h-4 mr-2 text-emerald-600 shrink-0" />
-              <span>Hotline chung: {schoolInfo.branch1Phone || schoolInfo.phone}</span>
+              <span>
+                Hotline chung:{' '}
+                <a
+                  href={`tel:${schoolInfo.branch1Phone || schoolInfo.phone}`}
+                  className="hover:underline font-bold text-emerald-800"
+                >
+                  {schoolInfo.branch1Phone || schoolInfo.phone}
+                </a>
+              </span>
             </div>
             <div className="flex items-center">
               <ShieldCheck className="w-4 h-4 mr-2 text-emerald-600 shrink-0" />
@@ -253,7 +266,15 @@ export const ContactSection: React.FC<ContactSectionProps> = ({
             </div>
             <div className="flex items-center">
               <Phone className="w-4 h-4 mr-2 text-emerald-600 shrink-0" />
-              <span>Hotline chung: {schoolInfo.branch2Phone || schoolInfo.phone}</span>
+              <span>
+                Hotline chung:{' '}
+                <a
+                  href={`tel:${schoolInfo.branch2Phone || schoolInfo.phone}`}
+                  className="hover:underline font-bold text-emerald-800"
+                >
+                  {schoolInfo.branch2Phone || schoolInfo.phone}
+                </a>
+              </span>
             </div>
             <div className="flex items-center">
               <Clock className="w-4 h-4 mr-2 text-emerald-600 shrink-0" />

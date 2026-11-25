@@ -185,9 +185,9 @@ export const StaffSection: React.FC<StaffSectionProps> = ({
         <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-700 bg-emerald-100/80 px-3 py-1 rounded-full">
           ĐỘI NGŨ SƯ PHẠM
         </span>
-        <h2 className="text-3xl sm:text-4xl font-black text-slate-900">
+        <h1 className="text-3xl sm:text-4xl font-black text-slate-900">
           Ban Giám Hiệu & Hội Đồng Sư Phạm
-        </h2>
+        </h1>
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
           Tập thể cán bộ giáo viên tâm huyết, chuẩn mực về đạo đức, vững vàng về
           chuyên môn, hết lòng vì học sinh thân yêu tại Trường Tiểu học Lê Lợi.

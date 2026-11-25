@@ -33,10 +33,10 @@ export const GallerySection: React.FC<GallerySectionProps> = ({
         <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-700 bg-emerald-100/80 px-3 py-1 rounded-full">
           KHOẢNH KHẮC LÊ LỢI
         </span>
-        <h2 className="text-3xl sm:text-4xl font-black text-slate-900 flex items-center justify-center gap-2">
+        <h1 className="text-3xl sm:text-4xl font-black text-slate-900 flex items-center justify-center gap-2">
           <ImageIcon className="w-8 h-8 text-emerald-700" />
           Thư Viện Ảnh Nhà Trường
-        </h2>
+        </h1>
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
           Ghi lại những nụ cười rạng rỡ của các em học sinh, sắc màu đại ngàn Tây
           Nguyên và diện mạo khang trang của ngôi trường theo năm tháng.

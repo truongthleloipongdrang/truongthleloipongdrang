@@ -98,20 +98,22 @@ export const Footer: React.FC<FooterProps> = ({
             </h4>
             <ul className="space-y-2 text-xs">
               {[
-                { label: 'Trang chủ', id: 'home' as NavSection },
-                { label: 'Giới thiệu & Lịch sử', id: 'about' as NavSection },
-                { label: 'Ban Giám Hiệu & Giáo viên', id: 'staff' as NavSection },
-                { label: 'Tin tức & Thông báo', id: 'news' as NavSection },
-                { label: 'Hoạt động giáo dục', id: 'activities' as NavSection },
-                { label: 'Tuyển sinh vào lớp 1', id: 'admissions' as NavSection },
-                { label: 'Tra cứu thông tin học sinh', id: 'student-lookup' as NavSection },
-                { label: 'Kho tài liệu dùng chung', id: 'documents' as NavSection },
-                { label: 'Thư viện hình ảnh', id: 'gallery' as NavSection },
-                { label: 'Liên hệ nhà trường', id: 'contact' as NavSection },
+                { label: 'Trang chủ', id: 'home' as NavSection, href: './' },
+                { label: 'Giới thiệu & Lịch sử', id: 'about' as NavSection, href: '#gioi-thieu' },
+                { label: 'Ban Giám Hiệu & Giáo viên', id: 'staff' as NavSection, href: '#ban-giam-hieu' },
+                { label: 'Tin tức & Thông báo', id: 'news' as NavSection, href: '#tin-tuc' },
+                { label: 'Hoạt động giáo dục', id: 'activities' as NavSection, href: '#hoat-dong' },
+                { label: 'Tuyển sinh vào lớp 1', id: 'admissions' as NavSection, href: '#tuyen-sinh' },
+                { label: 'Tra cứu thông tin học sinh', id: 'student-lookup' as NavSection, href: '#tra-cuu' },
+                { label: 'Kho tài liệu dùng chung', id: 'documents' as NavSection, href: '#tai-lieu' },
+                { label: 'Thư viện hình ảnh', id: 'gallery' as NavSection, href: '#thu-vien-anh' },
+                { label: 'Liên hệ nhà trường', id: 'contact' as NavSection, href: '#lien-he' },
               ].map((link, idx) => (
                 <li key={idx}>
-                  <button
-                    onClick={() => {
+                  <a
+                    href={link.href}
+                    onClick={(e) => {
+                      e.preventDefault();
                       onNavigate(link.id);
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
@@ -119,7 +121,7 @@ export const Footer: React.FC<FooterProps> = ({
                   >
                     <ChevronRight className="w-3.5 h-3.5 mr-1 text-emerald-500" />
                     <span>{link.label}</span>
-                  </button>
+                  </a>
                 </li>
               ))}
             </ul>
