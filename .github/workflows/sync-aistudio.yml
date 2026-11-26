@@ -5,8 +5,13 @@ on:
     - cron: '17 */6 * * *'
   workflow_dispatch:
     inputs:
+      include_content_management_files:
+        description: 'Dong bo nhom tep giao dien & quan ly noi dung (App.tsx, AdminModal.tsx, siteContentSync.ts, Quan ly Hoat dong & Thu vien anh)'
+        required: false
+        default: true
+        type: boolean
       include_auth_core_files:
-        description: 'Dong bo co kiem soat 6 tep dang nhap Google, phu huynh va tra cuu hoc sinh (tao PR, khong tu dong Merge)'
+        description: 'Dong bo co kiem soat nhom tep xac thuc Firebase, dang nhap Google/phu huynh va tra cuu hoc sinh (tao PR, khong tu dong Merge)'
         required: false
         default: false
         type: boolean
@@ -48,39 +53,85 @@ jobs:
           echo "Da ket noi hai kho GitHub"
 
       - name: Dong bo ma nguon duoc phep
+        id: sync_files
         env:
+          INCLUDE_CONTENT_MGMT: ${{ github.event_name != 'workflow_dispatch' || inputs.include_content_management_files == true }}
           INCLUDE_AUTH_CORE: ${{ github.event_name == 'workflow_dispatch' && inputs.include_auth_core_files == true }}
         run: |
-          # Luon bao ve cac tep du lieu, luu tru va cau hinh rieng cua website chinh
-          COMMON_EXCLUDES=(
+          # 1. Luon bao ve tuyet doi cac tep du lieu goc, luu tru rieng va cau hinh nhay cam
+          ALWAYS_EXCLUDES=(
             --exclude='data.ts'
             --exclude='admissionsStorage.ts'
             --exclude='feedbackStorage.ts'
-            --exclude='siteContentSync.ts'
             --exclude='geminiConfig.ts'
             --exclude='.env*'
           )
 
-          if [ "$INCLUDE_AUTH_CORE" = "true" ]; then
-            echo "Che do tich hop co kiem soat (include_auth_core_files=true): chi mo dong bo 6 tep xac thuc/tra cuu/quan tri vao PR. Khong ghi de firestore.rules, khong tu dong Merge."
-            rsync -a \
-              "${COMMON_EXCLUDES[@]}" \
-              aistudio-source/src/ src/
-          else
-            echo "Che do mac dinh an toan (include_auth_core_files=false): tiep tuc bao ve toan bo tep quan tri va Firebase."
-            rsync -a \
-              "${COMMON_EXCLUDES[@]}" \
-              --exclude='App.tsx' \
-              --exclude='onlineStore.ts' \
-              --exclude='studentExcelHelper.ts' \
-              --exclude='components/AdminModal.tsx' \
-              --exclude='components/MemberLoginModal.tsx' \
-              --exclude='components/StudentLookupSection.tsx' \
-              aistudio-source/src/ src/
+          # 2. Nhom tep giao dien & quan ly noi dung (mac dinh BAT de dong bo day du Quan Ly Hoat Dong & Thu Vien Anh)
+          CONTENT_MGMT_EXCLUDES=()
+          if [ "$INCLUDE_CONTENT_MGMT" != "true" ]; then
+            CONTENT_MGMT_EXCLUDES=(
+              --exclude='App.tsx'
+              --exclude='siteContentSync.ts'
+              --exclude='components/AdminModal.tsx'
+            )
           fi
 
-          echo "Danh sach thay doi:"
-          git status --short -- src/
+          # 3. Nhom tep xac thuc Firebase, phu huynh va du lieu 19 hoc sinh (mac dinh BAO VE, chi mo khi include_auth_core_files=true)
+          AUTH_CORE_EXCLUDES=()
+          if [ "$INCLUDE_AUTH_CORE" != "true" ]; then
+            AUTH_CORE_EXCLUDES=(
+              --exclude='onlineStore.ts'
+              --exclude='firebaseAuthStore.ts'
+              --exclude='studentExcelHelper.ts'
+              --exclude='components/MemberLoginModal.tsx'
+              --exclude='components/StudentLookupSection.tsx'
+            )
+          fi
+
+          echo "Che do dong bo: include_content_management_files=$INCLUDE_CONTENT_MGMT | include_auth_core_files=$INCLUDE_AUTH_CORE"
+
+          rsync -a \
+            "${ALWAYS_EXCLUDES[@]}" \
+            "${CONTENT_MGMT_EXCLUDES[@]}" \
+            "${AUTH_CORE_EXCLUDES[@]}" \
+            aistudio-source/src/ src/
+
+          # Xac minh day du cac tep quan ly noi dung bat buoc da co mat trong website chinh
+          REQUIRED_CONTENT_FILES=(
+            src/components/AdminGalleryManager.tsx
+            src/components/AdminActivitiesManager.tsx
+            src/components/ImageUrlPreview.tsx
+            src/components/AdminModal.tsx
+            src/components/ActivitiesSection.tsx
+            src/components/GallerySection.tsx
+            src/siteContentSync.ts
+            src/types.ts
+            src/mediaHelpers.ts
+            src/App.tsx
+          )
+          for req in "${REQUIRED_CONTENT_FILES[@]}"; do
+            if [ ! -f "$req" ]; then
+              echo "::error::Thieu tep quan ly noi dung bat buoc sau khi dong bo: $req"
+              exit 1
+            fi
+          done
+
+          CHANGED_LIST=$(git status --short -- src/)
+          CHANGED_COUNT=$(printf '%s\n' "$CHANGED_LIST" | sed '/^$/d' | wc -l | tr -d ' ')
+          echo "Tong so tep thay doi trong src/: $CHANGED_COUNT"
+          echo "$CHANGED_LIST"
+
+          {
+            echo "changed_count=$CHANGED_COUNT"
+            echo "changed_files<<EOF"
+            if [ -n "$CHANGED_LIST" ]; then
+              echo "$CHANGED_LIST"
+            else
+              echo "(Khong co tep nao thay doi)"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -118,12 +169,12 @@ jobs:
           console.log('Danh sach thu vien khop nhau.');
           NODE
 
-      - name: Kiem tra file can xu ly rieng
+      - name: Kiem tra file duoc bao ve
         run: |
-          for file in App.tsx onlineStore.ts studentExcelHelper.ts siteContentSync.ts components/AdminModal.tsx components/MemberLoginModal.tsx components/StudentLookupSection.tsx
+          for file in data.ts admissionsStorage.ts feedbackStorage.ts geminiConfig.ts onlineStore.ts firebaseAuthStore.ts studentExcelHelper.ts components/MemberLoginModal.tsx components/StudentLookupSection.tsx
           do
             if ! diff -q "aistudio-source/src/$file" "src/$file" > /dev/null 2>&1; then
-              echo "::warning::Can kiem tra thu cong: src/$file"
+              echo "::warning::Tep duoc bao ve co su khac biet (can kiem tra thu cong neu muon cap nhat): src/$file"
             fi
           done
 
@@ -156,20 +207,24 @@ jobs:
           base: main
           add-paths: src
           delete-branch: true
-          commit-message: "Sync safe AI Studio source changes"
-          title: "Cap nhat website tu Google AI Studio"
+          commit-message: "Sync AI Studio content management and safe UI changes"
+          title: "Cap nhat website tu Google AI Studio (Quan ly noi dung & giao dien)"
           body: |
             Dong bo ma nguon tu kho AI Studio Private.
 
-            Da kiem tra thu vien, TypeScript va Build truoc khi tao PR.
+            Da kiem tra thu vien, TypeScript (`npx tsc --noEmit`) va Build (`npm run build`) truoc khi tao PR.
 
-            Khong tu dong thay the hoac trien khai:
-            - Cau hinh trien khai GitHub
-            - Firestore Security Rules (firestore.rules)
-            - Du lieu goc (data.ts, admissionsStorage.ts, feedbackStorage.ts, siteContentSync.ts, geminiConfig.ts)
-            - File cau hinh nhay cam (.env*)
+            ### Danh sach tep thay doi (${{ steps.sync_files.outputs.changed_count }} tep)
+            ```
+            ${{ steps.sync_files.outputs.changed_files }}
+            ```
 
-            Can xem Files changed va kiem tra
-            giao dien truoc khi Merge.
+            ### Cac tep luon duoc bao ve (khong tu dong ghi de):
+            - Cau hinh trien khai GitHub (`.github/workflows/*`)
+            - Firestore Security Rules (`firestore.rules`)
+            - Du lieu goc & luu tru rieng (`data.ts`, `admissionsStorage.ts`, `feedbackStorage.ts`, `geminiConfig.ts`)
+            - File cau hinh nhay cam (`.env*`)
+            - Nhom xac thuc & 19 hoc sinh (`onlineStore.ts`, `firebaseAuthStore.ts`, `studentExcelHelper.ts`, `MemberLoginModal.tsx`, `StudentLookupSection.tsx` - chi mo khi bat `include_auth_core_files=true`)
 
+            Can xem tab **Files changed** va kiem tra giao dien truoc khi Merge.
             PR nay khong tu dong Merge.
