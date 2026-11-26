@@ -30,6 +30,7 @@ import {
   NewsItem,
   StudentRecord,
   StudentResultRecord,
+  AdminTabKey,
 } from './types';
 import { deduplicateStudents } from './studentExcelHelper';
 import {
@@ -95,18 +96,7 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
-  const [adminInitialTab, setAdminInitialTab] = useState<
-    | 'school'
-    | 'staff'
-    | 'news'
-    | 'students'
-    | 'documents'
-    | 'members'
-    | 'admissions_registrations'
-    | 'feedback'
-    | 'password'
-    | 'sync'
-  >('school');
+  const [adminInitialTab, setAdminInitialTab] = useState<AdminTabKey>('school');
 
   // Admissions new registrations notification counter & summary modal
   const [isAdmissionsSummaryOpen, setIsAdmissionsSummaryOpen] = useState<boolean>(false);
@@ -468,6 +458,9 @@ export default function App() {
           ...prev,
           ...remoteData,
           news: mergedNews,
+          galleryAlbums: Array.isArray(remoteData.galleryAlbums)
+            ? remoteData.galleryAlbums
+            : (prev.galleryAlbums || []),
           // Giữ tách biệt tuyệt đối: publicContent không bao giờ chứa hoặc ghi đè danh sách học sinh riêng tư
           students: [],
           schoolInfo: {
@@ -1455,6 +1448,10 @@ export default function App() {
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
             onToggleHighlightActivity={handleToggleHighlightActivity}
+            onOpenActivitiesManager={() => {
+              setAdminInitialTab('activities');
+              setIsAdminModalOpen(true);
+            }}
           />
         )}
 
@@ -1521,8 +1518,13 @@ export default function App() {
         {currentSection === 'gallery' && (
           <GallerySection
             gallery={content.gallery}
+            galleryAlbums={content.galleryAlbums || []}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
+            onOpenGalleryManager={() => {
+              setAdminInitialTab('gallery');
+              setIsAdminModalOpen(true);
+            }}
           />
         )}
 
@@ -1575,7 +1577,9 @@ export default function App() {
         onSavePrivateStudents={handleSavePrivateStudents}
         onSaveContent={(newContent, published = false) => {
           const publicOnlyContent: SiteContent = { ...newContent, students: [] };
-          if (!isPreviewMode && !onlineEnabled) saveSiteContentLocal(publicOnlyContent, !published);
+          if (!isPreviewMode) {
+            saveSiteContentLocal(publicOnlyContent, !published);
+          }
           setContent(publicOnlyContent);
         }}
         onResetContent={() => {
