@@ -566,39 +566,55 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Member / Parent Authenticated Status - Always visible */}
             {currentMember ? (
               <div className="flex items-center bg-emerald-700/60 border border-emerald-500/40 text-emerald-100 px-2.5 py-0.5 rounded-full text-[11px]">
-                {currentMember.photoURL ? (
-                  <img
-                    src={currentMember.photoURL}
-                    alt={currentMember.name}
-                    className="w-3.5 h-3.5 rounded-full mr-1.5 object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <User className="w-3.5 h-3.5 mr-1 text-emerald-300" />
-                )}
-                <span className="max-w-[130px] truncate font-medium">
-                  {currentMember.name || currentMember.email}
-                </span>
+                <button
+                  type="button"
+                  onClick={onOpenMemberLogin}
+                  className="inline-flex items-center hover:text-amber-200 transition-colors cursor-pointer"
+                  title="Xem thông tin tài khoản Google thành viên"
+                >
+                  {currentMember.photoURL ? (
+                    <img
+                      src={currentMember.photoURL}
+                      alt={currentMember.name}
+                      className="w-3.5 h-3.5 rounded-full mr-1.5 object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <User className="w-3.5 h-3.5 mr-1 text-emerald-300" />
+                  )}
+                  <span className="max-w-[130px] truncate font-medium">
+                    {currentMember.name || currentMember.email}
+                  </span>
+                </button>
                 <button
                   type="button"
                   onClick={onMemberLogout}
                   className="ml-2 text-emerald-300 hover:text-amber-300 cursor-pointer"
                   title="Đăng xuất tài khoản Google"
+                  aria-label="Đăng xuất tài khoản Google"
                 >
                   <LogOut className="w-3 h-3" />
                 </button>
               </div>
             ) : currentParent ? (
               <div className="flex items-center bg-amber-400/20 border border-amber-400/50 text-amber-100 px-2.5 py-0.5 rounded-full text-[11px]">
-                <User className="w-3.5 h-3.5 mr-1 text-amber-300" />
-                <span className="max-w-[140px] truncate font-medium">
-                  PH: {currentParent.email}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => handleNavClick('student-lookup')}
+                  className="inline-flex items-center hover:text-white transition-colors cursor-pointer"
+                  title="Mở trang Tra cứu kết quả học tập của con em"
+                >
+                  <User className="w-3.5 h-3.5 mr-1 text-amber-300" />
+                  <span className="max-w-[140px] truncate font-medium">
+                    PH: {currentParent.email}
+                  </span>
+                </button>
                 <button
                   type="button"
                   onClick={onParentLogout || onMemberLogout}
                   className="ml-2 text-amber-200 hover:text-white cursor-pointer"
                   title="Đăng xuất tài khoản phụ huynh"
+                  aria-label="Đăng xuất tài khoản phụ huynh"
                 >
                   <LogOut className="w-3 h-3" />
                 </button>
