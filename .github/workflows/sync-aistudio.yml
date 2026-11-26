@@ -1,10 +1,15 @@
-
 name: Dong bo AI Studio ve website
 
 on:
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
+    inputs:
+      include_auth_core_files:
+        description: 'Dong bo co kiem soat 6 tep dang nhap Google, phu huynh va tra cuu hoc sinh (tao PR, khong tu dong Merge)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -43,21 +48,36 @@ jobs:
           echo "Da ket noi hai kho GitHub"
 
       - name: Dong bo ma nguon duoc phep
+        env:
+          INCLUDE_AUTH_CORE: ${{ github.event_name == 'workflow_dispatch' && inputs.include_auth_core_files == true }}
         run: |
-          rsync -a \
-            --exclude='App.tsx' \
-            --exclude='data.ts' \
-            --exclude='onlineStore.ts' \
-            --exclude='admissionsStorage.ts' \
-            --exclude='feedbackStorage.ts' \
-            --exclude='siteContentSync.ts' \
-            --exclude='geminiConfig.ts' \
-            --exclude='studentExcelHelper.ts' \
-            --exclude='components/AdminModal.tsx' \
-            --exclude='components/MemberLoginModal.tsx' \
-            --exclude='components/StudentLookupSection.tsx' \
-            --exclude='.env*' \
-            aistudio-source/src/ src/
+          # Luon bao ve cac tep du lieu, luu tru va cau hinh rieng cua website chinh
+          COMMON_EXCLUDES=(
+            --exclude='data.ts'
+            --exclude='admissionsStorage.ts'
+            --exclude='feedbackStorage.ts'
+            --exclude='siteContentSync.ts'
+            --exclude='geminiConfig.ts'
+            --exclude='.env*'
+          )
+
+          if [ "$INCLUDE_AUTH_CORE" = "true" ]; then
+            echo "Che do tich hop co kiem soat (include_auth_core_files=true): chi mo dong bo 6 tep xac thuc/tra cuu/quan tri vao PR. Khong ghi de firestore.rules, khong tu dong Merge."
+            rsync -a \
+              "${COMMON_EXCLUDES[@]}" \
+              aistudio-source/src/ src/
+          else
+            echo "Che do mac dinh an toan (include_auth_core_files=false): tiep tuc bao ve toan bo tep quan tri va Firebase."
+            rsync -a \
+              "${COMMON_EXCLUDES[@]}" \
+              --exclude='App.tsx' \
+              --exclude='onlineStore.ts' \
+              --exclude='studentExcelHelper.ts' \
+              --exclude='components/AdminModal.tsx' \
+              --exclude='components/MemberLoginModal.tsx' \
+              --exclude='components/StudentLookupSection.tsx' \
+              aistudio-source/src/ src/
+          fi
 
           echo "Danh sach thay doi:"
           git status --short -- src/
@@ -100,7 +120,7 @@ jobs:
 
       - name: Kiem tra file can xu ly rieng
         run: |
-          for file in App.tsx siteContentSync.ts components/AdminModal.tsx components/MemberLoginModal.tsx
+          for file in App.tsx onlineStore.ts studentExcelHelper.ts siteContentSync.ts components/AdminModal.tsx components/MemberLoginModal.tsx components/StudentLookupSection.tsx
           do
             if ! diff -q "aistudio-source/src/$file" "src/$file" > /dev/null 2>&1; then
               echo "::warning::Can kiem tra thu cong: src/$file"
@@ -109,10 +129,10 @@ jobs:
 
           if [ -f aistudio-source/firestore.rules ]; then
             if ! cmp -s aistudio-source/firestore.rules firestore.rules; then
-              echo "::warning::firestore.rules khac nhau. Can kiem tra va phe duyet rieng."
+              echo "::warning::firestore.rules khac nhau. Can kiem tra va phe duyet rieng (khong tu dong ghi de hay trien khai)."
             fi
           fi
-  
+
       - name: Install dependencies
         run: bun install
 
@@ -125,6 +145,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_ADMIN_EMAIL: ${{ vars.VITE_FIREBASE_ADMIN_EMAIL }}
 
       - name: Tao Pull Request
@@ -140,13 +161,13 @@ jobs:
           body: |
             Dong bo ma nguon tu kho AI Studio Private.
 
-            Da kiem tra TypeScript va Build truoc khi tao PR.
+            Da kiem tra thu vien, TypeScript va Build truoc khi tao PR.
 
-            Khong tu dong thay the:
+            Khong tu dong thay the hoac trien khai:
             - Cau hinh trien khai GitHub
-            - Firebase va dang nhap quan tri
-            - File du lieu hoc sinh
-            - File cau hinh nhay cam
+            - Firestore Security Rules (firestore.rules)
+            - Du lieu goc (data.ts, admissionsStorage.ts, feedbackStorage.ts, siteContentSync.ts, geminiConfig.ts)
+            - File cau hinh nhay cam (.env*)
 
             Can xem Files changed va kiem tra
             giao dien truoc khi Merge.
