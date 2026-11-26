@@ -356,7 +356,7 @@ export async function parseStudentExcelFile(
 
     return {
       success: true,
-      data: parsedStudents,
+      data: deduplicateStudents(parsedStudents),
     };
   } catch (err: any) {
     return {
@@ -366,3 +366,113 @@ export async function parseStudentExcelFile(
     };
   }
 }
+
+/**
+ * Chuẩn hóa khóa định danh học sinh để phát hiện trùng lặp khi nạp Excel nhiều lần.
+ * Ưu tiên Mã học sinh (studentCode); nếu thiếu mã thì dùng cặp Họ tên + Lớp + Điểm trường.
+ */
+function normalizeTextKey(val: string | undefined): string {
+  return (val || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+export function getStudentIdentityKey(student: StudentRecord): string {
+  const code = normalizeTextKey(student.studentCode);
+  if (code) {
+    return `code:${code}`;
+  }
+  return `name:${normalizeTextKey(student.fullName)}|class:${normalizeTextKey(student.className)}|campus:${normalizeTextKey(student.campus || 'Trường chính')}`;
+}
+
+/**
+ * Loại bỏ các bản ghi học sinh trùng lặp trong cùng một danh sách,
+ * giữ lại bản ghi mới nhất/sau cùng và chuẩn hóa campus mặc định.
+ */
+export function deduplicateStudents(students: StudentRecord[]): StudentRecord[] {
+  const seen = new Map<string, number>();
+  const result: StudentRecord[] = [];
+
+  for (const raw of students) {
+    if (!raw || !raw.fullName || !raw.fullName.trim()) continue;
+    const normalized: StudentRecord = {
+      ...raw,
+      studentCode: (raw.studentCode || '').trim().toUpperCase(),
+      fullName: raw.fullName.trim(),
+      className: (raw.className || '').trim().toUpperCase(),
+      campus: raw.campus || 'Trường chính',
+      academicYear: (raw.academicYear || '2026 - 2027').trim(),
+      teacherName: (raw.teacherName || 'Giáo viên chủ nhiệm').trim(),
+      awards: (raw.awards || '').trim(),
+    };
+    const key = getStudentIdentityKey(normalized);
+    const existingIdx = seen.get(key);
+    if (existingIdx !== undefined) {
+      result[existingIdx] = {
+        ...normalized,
+        id: result[existingIdx].id || normalized.id,
+      };
+    } else {
+      seen.set(key, result.length);
+      result.push(normalized);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Gộp danh sách học sinh từ Excel với danh sách hiện tại mà không tạo bản ghi trùng lặp.
+ * - mode === 'replace': thay thế toàn bộ bằng danh sách mới đã lọc trùng.
+ * - mode === 'append': cập nhật học sinh trùng mã/hồ sơ và chỉ thêm mới học sinh chưa có.
+ */
+export function mergeStudentLists(
+  existing: StudentRecord[],
+  incoming: StudentRecord[],
+  mode: 'append' | 'replace'
+): {
+  merged: StudentRecord[];
+  addedCount: number;
+  updatedCount: number;
+} {
+  const cleanIncoming = deduplicateStudents(incoming);
+  if (mode === 'replace') {
+    return {
+      merged: cleanIncoming,
+      addedCount: cleanIncoming.length,
+      updatedCount: 0,
+    };
+  }
+
+  const cleanExisting = deduplicateStudents(existing);
+  const indexByKey = new Map<string, number>();
+  cleanExisting.forEach((st, idx) => {
+    indexByKey.set(getStudentIdentityKey(st), idx);
+  });
+
+  const merged = [...cleanExisting];
+  let addedCount = 0;
+  let updatedCount = 0;
+
+  for (const st of cleanIncoming) {
+    const key = getStudentIdentityKey(st);
+    const foundIdx = indexByKey.get(key);
+    if (foundIdx !== undefined) {
+      merged[foundIdx] = {
+        ...st,
+        id: merged[foundIdx].id || st.id,
+      };
+      updatedCount += 1;
+    } else {
+      indexByKey.set(key, merged.length);
+      merged.push(st);
+      addedCount += 1;
+    }
+  }
+
+  return { merged, addedCount, updatedCount };
+}
+

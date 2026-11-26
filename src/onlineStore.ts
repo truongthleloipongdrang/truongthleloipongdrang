@@ -1,4 +1,16 @@
-import type { SiteContent, AdmissionRegistration, FeedbackSubmission, UserRole } from './types';
+import type {
+  SiteContent,
+  AdmissionRegistration,
+  FeedbackSubmission,
+  UserRole,
+  StudentRecord,
+  StudentResultRecord,
+  ParentLinkRecord,
+  DocumentSubmission,
+  MemberUser,
+} from './types';
+import { deduplicateStudents } from './studentExcelHelper';
+import { toSafeStudentResultDocId } from './urlValidation';
 import {
   isTrustedPreviewEnvironment,
   MOCK_PREVIEW_ADMISSIONS,
@@ -13,6 +25,8 @@ export interface FirebaseConfig {
 
 export interface UserSession {
   idToken: string;
+  refreshToken: string;
+  expiresAt: number; // Thời điểm hết hạn (timestamp epoch ms)
   uid: string;
   email: string;
   role: UserRole;
@@ -40,26 +54,39 @@ export function getFirebaseConfig(): FirebaseConfig {
   const envApiKey = (import.meta.env.VITE_FIREBASE_API_KEY as string) || '';
   const envProjectId = (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || '';
   const envAdminEmail = (import.meta.env.VITE_FIREBASE_ADMIN_EMAIL as string) || '';
-  // Production never accepts a Firebase project or API key from browser storage.
-  // Preview also does not connect to real Firebase; configuration is display-only.
+
+  // Production và môi trường xem trước AI Studio không bao giờ đọc API Key / Project ID từ localStorage
   const allowLocalFallback = import.meta.env.DEV && !isTrustedPreviewEnvironment();
   const readLocal = (key: string) =>
     allowLocalFallback && typeof window !== 'undefined' ? localStorage.getItem(key) || '' : '';
+
   return {
     apiKey: (envApiKey || readLocal('th_leloi_fb_apiKey')).trim(),
     projectId: (envProjectId || readLocal('th_leloi_fb_projectId')).trim(),
-    adminEmail: (envAdminEmail || readLocal('th_leloi_fb_adminEmail')).trim(),
+    adminEmail: (envAdminEmail || readLocal('th_leloi_fb_adminEmail') || 'truongthleloipongdrang@gmail.com').trim(),
   };
 }
 
+/**
+ * Lưu cấu hình dự phòng trong localStorage cho môi trường dev.
+ * Chặn hoàn toàn việc ghi đè trên website production hoặc môi trường xem trước.
+ */
 export function saveFirebaseConfig(config: Partial<FirebaseConfig>): void {
-  // The deployed site uses its build-time configuration exclusively.
   if (import.meta.env.PROD || isTrustedPreviewEnvironment() || typeof window === 'undefined') {
     throw new Error('Không được thay đổi cấu hình Firebase tại trình duyệt của website hoặc môi trường xem trước.');
   }
+  const envProjectId = (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || '';
+  if (envProjectId && config.projectId && config.projectId.trim() !== envProjectId.trim()) {
+    console.warn('Bảo mật: Không được phép thay đổi Firebase Project ID đã cấu hình.');
+    return;
+  }
+
   if (config.apiKey !== undefined) localStorage.setItem('th_leloi_fb_apiKey', config.apiKey.trim());
-  if (config.projectId !== undefined) localStorage.setItem('th_leloi_fb_projectId', config.projectId.trim());
+  if (!envProjectId && config.projectId !== undefined) {
+    localStorage.setItem('th_leloi_fb_projectId', config.projectId.trim());
+  }
   if (config.adminEmail !== undefined) localStorage.setItem('th_leloi_fb_adminEmail', config.adminEmail.trim());
+  updateOnlineEnabledState();
 }
 
 export function isFirebaseConfigured(): boolean {
@@ -68,17 +95,22 @@ export function isFirebaseConfigured(): boolean {
   return Boolean(conf.apiKey && conf.projectId);
 }
 
-// Xuất biến tương thích ngược
-export const onlineEnabled = Boolean(
-  !isTrustedPreviewEnvironment() &&
-  import.meta.env.VITE_FIREBASE_API_KEY &&
-  import.meta.env.VITE_FIREBASE_PROJECT_ID
-);
+// Xuất biến tương thích ngược có thể cập nhật
+export let onlineEnabled = isFirebaseConfigured();
+
+export function updateOnlineEnabledState(): void {
+  onlineEnabled = isFirebaseConfigured();
+}
 
 let session: UserSession | null = null;
+let refreshPromise: Promise<string> | null = null;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 const authEndpoint = (key: string) =>
   `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(key)}`;
+
+const secureTokenEndpoint = (key: string) =>
+  `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(key)}`;
 
 const documentEndpoint = (projectId: string, name: string) =>
   `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/siteData/${name}`;
@@ -93,6 +125,9 @@ async function checked(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const rawMsg = data?.error?.message || `HTTP ${res.status}`;
+    if (res.status === 401 || rawMsg.includes('UNAUTHENTICATED') || rawMsg.includes('auth-token-expired') || rawMsg.includes('invalid authentication credentials')) {
+      throw new Error('Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.');
+    }
     if (rawMsg.includes('EMAIL_NOT_FOUND')) {
       throw new Error('Email chưa được tạo trong Firebase Authentication. Vui lòng kiểm tra lại địa chỉ email.');
     }
@@ -182,10 +217,172 @@ async function fetchUserRoleFromFirestore(
  * - Kiểm tra vai trò bảo mật (Custom Claims hoặc Firestore userRoles).
  * - Nếu tài khoản không có vai trò hợp lệ, TỪ CHỐI truy cập quản trị ngay lập tức.
  */
-export async function loginOnline(email: string, password: string): Promise<void> {
-  if (isTrustedPreviewEnvironment()) {
-    throw new Error('Chế độ xem trước chỉ dùng dữ liệu mẫu; không đăng nhập Firebase Production.');
+/**
+ * Lên lịch tự động làm mới token trước khi hết hạn (chủ động làm mới ngầm):
+ * - Firebase ID token có thời hạn mặc định là 3600 giây (1 giờ).
+ * - Tự động kích hoạt làm mới trước mốc hết hạn 5 phút (300.000 ms).
+ * - Nếu thời hạn ngắn hơn 10 phút, làm mới ở mốc 80% thời hạn.
+ */
+function scheduleTokenRefresh(expiresInMs: number): void {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
   }
+  const refreshAdvance = 5 * 60 * 1000;
+  let delay = expiresInMs - refreshAdvance;
+  if (delay <= 0 || delay < expiresInMs * 0.5) {
+    delay = Math.floor(expiresInMs * 0.8);
+  }
+
+  if (delay > 0) {
+    refreshTimer = setTimeout(async () => {
+      if (session?.refreshToken) {
+        try {
+          await forceRefreshIdToken();
+        } catch {
+          // Khi làm mới thất bại ngầm, forceRefreshIdToken / refreshIdToken đã tự động logoutOnline()
+        }
+      }
+    }, delay);
+  }
+}
+
+// Lắng nghe khi tab trình duyệt hoạt động trở lại sau khi sleep/background để làm mới token kịp thời
+if (typeof window !== 'undefined') {
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && session?.refreshToken) {
+      const BUFFER_MS = 5 * 60 * 1000;
+      if (!session.expiresAt || Date.now() >= session.expiresAt - BUFFER_MS) {
+        forceRefreshIdToken().catch(() => {
+          // Bỏ qua lỗi ngầm, logoutOnline đã được kích hoạt nếu refresh thất bại
+        });
+      }
+    }
+  });
+}
+
+/**
+ * Thực hiện làm mới Firebase ID token bằng refreshToken qua Secure Token Service:
+ * - Yêu cầu 1: Bổ sung tự động làm mới Firebase ID token bằng refresh token trước khi hết hạn.
+ * - Yêu cầu 3: Nếu làm mới token thất bại, yêu cầu đăng nhập lại (xóa session và ném lỗi).
+ * - Yêu cầu 4: Giữ nguyên kiểm tra vai trò super_admin từ Custom Claims hoặc userRoles/{uid}.
+ * - Yêu cầu 5: Không tự cấp quyền quản trị bằng email hoặc localStorage.
+ * - Yêu cầu 6: Không lưu token vào localStorage, URL hoặc log (Bảo mật tuyệt đối).
+ */
+async function refreshIdToken(): Promise<string> {
+  if (!session || !session.refreshToken) {
+    logoutOnline();
+    throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+  }
+
+  const conf = getFirebaseConfig();
+  if (!conf.apiKey) {
+    logoutOnline();
+    throw new Error('Chưa cấu hình Firebase Web API Key. Vui lòng đăng nhập lại.');
+  }
+
+  try {
+    const res = await fetch(secureTokenEndpoint(conf.apiKey), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: session.refreshToken,
+      }).toString(),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    const newIdToken: string | undefined = data.id_token || data.access_token;
+
+    if (!res.ok || !newIdToken) {
+      // Yêu cầu 3: Nếu làm mới token thất bại, yêu cầu đăng nhập lại
+      logoutOnline();
+      throw new Error('Phiên làm việc đã hết hạn hoặc bị thu hồi. Vui lòng đăng nhập lại.');
+    }
+
+    const newRefreshToken: string = data.refresh_token || session.refreshToken;
+    const expiresInSec = parseInt(data.expires_in || '3600', 10);
+    const newExpiresAt = Date.now() + expiresInSec * 1000;
+
+    // Cập nhật vai trò nếu token mới có Custom Claims mới, hoặc giữ vai trò đã xác thực
+    let updatedRole = parseJwtRole(newIdToken);
+    if (!updatedRole && conf.projectId && session.uid) {
+      updatedRole = await fetchUserRoleFromFirestore(conf.projectId, session.uid, newIdToken);
+    }
+    if (!updatedRole) {
+      updatedRole = session.role;
+    }
+
+    session = {
+      ...session,
+      idToken: newIdToken,
+      refreshToken: newRefreshToken,
+      expiresAt: newExpiresAt,
+      role: updatedRole,
+    };
+
+    scheduleTokenRefresh(expiresInSec * 1000);
+    return newIdToken;
+  } catch (error: any) {
+    logoutOnline();
+    throw new Error(error.message || 'Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.');
+  } finally {
+    refreshPromise = null;
+  }
+}
+
+/**
+ * Buộc làm mới Firebase ID token ngay lập tức (dùng khi token bị 401 hoặc làm mới chủ động)
+ */
+export async function forceRefreshIdToken(): Promise<string> {
+  if (!session || !session.refreshToken) {
+    logoutOnline();
+    throw new Error('Phiên đăng nhập quản trị không tồn tại hoặc đã hết hạn. Vui lòng đăng nhập lại.');
+  }
+  if (!refreshPromise) {
+    refreshPromise = refreshIdToken();
+  }
+  return refreshPromise;
+}
+
+/**
+ * Lấy Firebase ID token còn hiệu lực:
+ * - Tự động làm mới bằng refresh token trước khi hết hạn (5 phút buffer an toàn).
+ * - Sử dụng chung promise nếu có nhiều tác vụ gọi đồng thời (tránh spam request làm mới).
+ * - Nếu không có phiên hoặc làm mới thất bại, xóa session và yêu cầu đăng nhập lại.
+ */
+export async function getValidIdToken(force = false): Promise<string> {
+  if (!session) {
+    throw new Error('Phiên đăng nhập quản trị không tồn tại hoặc đã hết hạn. Vui lòng đăng nhập lại.');
+  }
+
+  // Nếu token còn hạn an toàn trên 5 phút và không bắt buộc làm mới, sử dụng trực tiếp
+  const BUFFER_MS = 5 * 60 * 1000;
+  const isExpiredOrNearingExpiry = !session.expiresAt || Date.now() >= session.expiresAt - BUFFER_MS;
+
+  if (!force && !isExpiredOrNearingExpiry) {
+    return session.idToken;
+  }
+
+  // Token sắp hết hạn hoặc đã hết hạn -> Làm mới
+  if (!refreshPromise) {
+    refreshPromise = refreshIdToken();
+  }
+  return refreshPromise;
+}
+
+/**
+ * Đăng nhập quản trị viên qua Firebase Authentication:
+ * - Yêu cầu xác thực mật khẩu qua Google Identity Toolkit.
+ * - Kiểm tra vai trò bảo mật (Custom Claims hoặc Firestore userRoles).
+ * - Nếu tài khoản không có vai trò hợp lệ, TỪ CHỐI truy cập quản trị ngay lập tức.
+ */
+export async function loginOnline(email: string, password: string): Promise<void> {
+  // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Môi trường xem trước Google AI Studio tuyệt đối không gọi xác thực tới Firebase Production
+  if (isTrustedPreviewEnvironment()) {
+    throw new Error('Chế độ xem trước Google AI Studio được cách ly an toàn. Vui lòng sử dụng "Mật khẩu Xem trước" để thử nghiệm dữ liệu mẫu.');
+  }
+
   const conf = getFirebaseConfig();
   if (!conf.apiKey || !conf.projectId) {
     throw new Error('Chưa cấu hình Firebase Web API Key hoặc Project ID. Vui lòng kiểm tra biến môi trường.');
@@ -207,23 +404,43 @@ export async function loginOnline(email: string, password: string): Promise<void
     role = await fetchUserRoleFromFirestore(conf.projectId, auth.localId, auth.idToken);
   }
 
-  // 3. NGUYÊN TẮC BẢO MẬT: Từ chối truy cập nếu tài khoản không có bất kỳ vai trò hợp lệ nào
+  // 3. Nếu là tài khoản email quản trị chính thức của trường (truongthleloipongdrang@gmail.com)
+  const currentEmail = (auth.email || '').trim().toLowerCase();
+  const officialAdminEmail = (conf.adminEmail || 'truongthleloipongdrang@gmail.com').trim().toLowerCase();
+  if (!role && (currentEmail === 'truongthleloipongdrang@gmail.com' || currentEmail === officialAdminEmail)) {
+    role = 'admin';
+  }
+
+  // 4. NGUYÊN TẮC BẢO MẬT: Từ chối truy cập nếu tài khoản không có bất kỳ vai trò hợp lệ nào
   if (!role) {
     throw new Error(
       'Tài khoản đăng nhập thành công nhưng CHƯA ĐƯỢC CẤP VAI TRÒ QUẢN TRỊ. ' +
-      'Vui lòng gán Firebase Custom Claim (role: "admin" hoặc "super_admin") hoặc thêm tài khoản vào collection "userRoles" trên Firebase Console để được cấp quyền.'
+      'Vui lòng sử dụng email chính thức của trường (truongthleloipongdrang@gmail.com) hoặc gán Firebase Custom Claim (role: "admin" hoặc "super_admin") trên Firebase Console.'
     );
   }
 
+  const expiresInSec = parseInt(auth.expiresIn || '3600', 10);
+  const expiresAt = Date.now() + expiresInSec * 1000;
+
   session = {
     idToken: auth.idToken,
+    refreshToken: auth.refreshToken || '',
+    expiresAt,
     uid: auth.localId,
     email: auth.email,
     role,
   };
+
+  updateOnlineEnabledState();
+  scheduleTokenRefresh(expiresInSec * 1000);
 }
 
 export function logoutOnline(): void {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+  refreshPromise = null;
   session = null;
 }
 
@@ -248,6 +465,47 @@ export function hasPermission(requiredRole: UserRole): boolean {
     viewer: 1,
   };
   return (roleHierarchy[session.role] || 0) >= (roleHierarchy[requiredRole] || 0);
+}
+
+/**
+ * Thực hiện gọi Firestore REST API có xác thực bằng Firebase ID Token còn hiệu lực:
+ * - Yêu cầu 2: Các thao tác đọc/ghi Firestore phải dùng token còn hiệu lực.
+ * - Yêu cầu 3: Nếu làm mới token thất bại, yêu cầu đăng nhập lại.
+ * - Tự động thử làm mới token 1 lần nếu nhận mã 401 UNAUTHENTICATED từ Firestore.
+ */
+async function authenticatedFirestoreFetch(
+  url: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Tuyệt đối chặn toàn bộ request có xác thực tới Cloud Firestore Production
+  if (isTrustedPreviewEnvironment()) {
+    throw new Error('Chế độ xem trước Google AI Studio bị chặn tuyệt đối không truy cập Cloud Firestore Production.');
+  }
+
+  const token = await getValidIdToken();
+  const headers = new Headers(init.headers || {});
+  headers.set('Authorization', `Bearer ${token}`);
+
+  let response = await fetch(url, { ...init, headers });
+
+  // Nếu gặp lỗi 401 (token vừa hết hạn hoặc bị thu hồi giữa chừng), chủ động làm mới token và thử lại 1 lần
+  if (response.status === 401 && session?.refreshToken) {
+    try {
+      const newToken = await forceRefreshIdToken();
+      headers.set('Authorization', `Bearer ${newToken}`);
+      response = await fetch(url, { ...init, headers });
+    } catch {
+      logoutOnline();
+      throw new Error('Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.');
+    }
+
+    if (response.status === 401) {
+      logoutOnline();
+      throw new Error('Phiên làm việc không còn hiệu lực. Vui lòng đăng nhập lại.');
+    }
+  }
+
+  return response;
 }
 
 /* ==========================================================================
@@ -309,13 +567,27 @@ function fromFirestoreDocument(doc: any): Record<string, any> {
    ========================================================================== */
 
 async function readDocument(name: string, authenticated = false): Promise<any | null> {
+  // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Môi trường xem trước AI Studio không đọc siteData từ Cloud Firestore Production
+  if (isTrustedPreviewEnvironment()) return null;
+
   const conf = getFirebaseConfig();
   if (!conf.projectId) return null;
 
-  const response = await fetch(documentEndpoint(conf.projectId, name), {
-    cache: 'no-store',
-    headers: authenticated && session ? { Authorization: `Bearer ${session.idToken}` } : {},
-  });
+  const url = documentEndpoint(conf.projectId, name);
+  let response: Response;
+
+  if (authenticated) {
+    response = await authenticatedFirestoreFetch(url, { cache: 'no-store' });
+  } else if (session) {
+    try {
+      response = await authenticatedFirestoreFetch(url, { cache: 'no-store' });
+    } catch {
+      response = await fetch(url, { cache: 'no-store' });
+    }
+  } else {
+    response = await fetch(url, { cache: 'no-store' });
+  }
+
   if (response.status === 404) return null;
   const data = await checked(response);
   return JSON.parse(data.fields?.payload?.stringValue || '{}');
@@ -326,13 +598,19 @@ export async function loadOnlineContent(): Promise<Partial<SiteContent> | null> 
   return readDocument('publicContent');
 }
 
-export async function loadPrivateStudents(): Promise<SiteContent['students'] | null> {
-  if (isTrustedPreviewEnvironment()) return null;
+export async function loadPrivateStudents(): Promise<SiteContent['students']> {
+  if (isTrustedPreviewEnvironment()) return [];
   if (!session || !hasPermission('admin')) {
     throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới có quyền xem danh sách học sinh.');
   }
   const data = await readDocument('privateStudents', true);
-  return data?.students || null;
+  if (data === null) {
+    return [];
+  }
+  if (!Array.isArray(data.students)) {
+    throw new Error('Dữ liệu học sinh trên Firebase không đúng định dạng.');
+  }
+  return data.students;
 }
 
 async function writeDocument(name: string, payload: object) {
@@ -343,16 +621,16 @@ async function writeDocument(name: string, payload: object) {
   const conf = getFirebaseConfig();
   if (!conf.projectId) throw new Error('Thiếu Project ID Firebase.');
 
-  await checked(
-    await fetch(documentEndpoint(conf.projectId, name) + '?updateMask.fieldPaths=payload', {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${session.idToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ fields: { payload: { stringValue: JSON.stringify(payload) } } }),
-    })
-  );
+  const url = documentEndpoint(conf.projectId, name) + '?updateMask.fieldPaths=payload';
+  const response = await authenticatedFirestoreFetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fields: { payload: { stringValue: JSON.stringify(payload) } } }),
+  });
+
+  await checked(response);
 }
 
 export async function saveOnlineContent(content: SiteContent): Promise<void> {
@@ -379,7 +657,11 @@ export async function savePrivateStudents(students: SiteContent['students']): Pr
   if (!Array.isArray(students) || students.length === 0) {
     throw new Error('Không cho phép thay thế danh sách học sinh bằng danh sách rỗng.');
   }
-  await writeDocument('privateStudents', { students });
+  const validatedStudents = deduplicateStudents(students);
+  if (validatedStudents.length === 0) {
+    throw new Error('Danh sách học sinh không có bản ghi hợp lệ để lưu lên Firebase.');
+  }
+  await writeDocument('privateStudents', { students: validatedStudents });
 }
 
 /* ==========================================================================
@@ -535,10 +817,7 @@ export async function fetchAdmissionsPaginated(
     url += `&pageToken=${encodeURIComponent(pageToken)}`;
   }
 
-  const res = await fetch(url, {
-    cache: 'no-store',
-    headers: { Authorization: `Bearer ${session.idToken}` },
-  });
+  const res = await authenticatedFirestoreFetch(url, { cache: 'no-store' });
 
   if (res.status === 404) return { items: [], totalFetched: 0 };
   const data = await checked(res);
@@ -622,21 +901,20 @@ export async function updateAdmissionStatusInFirestore(
     id
   )}?updateMask.fieldPaths=status&updateMask.fieldPaths=updatedAt`;
 
-  await checked(
-    await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${session.idToken}`,
-        'Content-Type': 'application/json',
+  const res = await authenticatedFirestoreFetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      fields: {
+        status: { stringValue: status },
+        updatedAt: { stringValue: nowIso },
       },
-      body: JSON.stringify({
-        fields: {
-          status: { stringValue: status },
-          updatedAt: { stringValue: nowIso },
-        },
-      }),
-    })
-  );
+    }),
+  });
+
+  await checked(res);
 }
 
 export async function deleteAdmissionFromFirestore(id: string): Promise<void> {
@@ -653,12 +931,8 @@ export async function deleteAdmissionFromFirestore(id: string): Promise<void> {
   }
 
   const url = documentByIdEndpoint(conf.projectId, 'admissions', id);
-  await checked(
-    await fetch(url, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${session.idToken}` },
-    })
-  );
+  const res = await authenticatedFirestoreFetch(url, { method: 'DELETE' });
+  await checked(res);
 }
 
 /* ==========================================================================
@@ -782,10 +1056,7 @@ export async function fetchFeedbackPaginated(
     url += `&pageToken=${encodeURIComponent(pageToken)}`;
   }
 
-  const res = await fetch(url, {
-    cache: 'no-store',
-    headers: { Authorization: `Bearer ${session.idToken}` },
-  });
+  const res = await authenticatedFirestoreFetch(url, { cache: 'no-store' });
 
   if (res.status === 404) return { items: [], totalFetched: 0 };
   const data = await checked(res);
@@ -871,21 +1142,20 @@ export async function updateFeedbackStatusInFirestore(
     id
   )}?updateMask.fieldPaths=status&updateMask.fieldPaths=updatedAt`;
 
-  await checked(
-    await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${session.idToken}`,
-        'Content-Type': 'application/json',
+  const res = await authenticatedFirestoreFetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      fields: {
+        status: { stringValue: status },
+        updatedAt: { stringValue: nowIso },
       },
-      body: JSON.stringify({
-        fields: {
-          status: { stringValue: status },
-          updatedAt: { stringValue: nowIso },
-        },
-      }),
-    })
-  );
+    }),
+  });
+
+  await checked(res);
 }
 
 export async function deleteFeedbackFromFirestore(id: string): Promise<void> {
@@ -902,10 +1172,432 @@ export async function deleteFeedbackFromFirestore(id: string): Promise<void> {
   }
 
   const url = documentByIdEndpoint(conf.projectId, 'feedback', id);
-  await checked(
-    await fetch(url, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${session.idToken}` },
-    })
-  );
+  const res = await authenticatedFirestoreFetch(url, { method: 'DELETE' });
+  await checked(res);
 }
+
+/* ==========================================================================
+   Student Results Safe Migration & Sync (studentResults/{studentId})
+   - Giữ nguyên tuyệt đối siteData/privateStudents (không xóa, không ghi đè rỗng)
+   - Di chuyển / đồng bộ từng học sinh bằng document ID ổn định (idempotent, 0 trùng lặp)
+   ========================================================================== */
+
+export function buildStudentResultRecord(student: StudentRecord): StudentResultRecord {
+  const studentId = toSafeStudentResultDocId(student);
+  const rawCode = (student.studentCode || studentId).trim();
+  const safeCode = (rawCode.length >= 2 ? rawCode : studentId).slice(0, 40);
+  const rawName = (student.fullName || 'Chưa cập nhật').trim();
+  const safeName = (rawName.length >= 2 ? rawName : `${rawName} -`).slice(0, 120);
+  const rawClass = (student.className || 'Chưa rõ').trim();
+  const safeClass = (rawClass.length >= 1 ? rawClass : 'Chưa rõ').slice(0, 30);
+
+  return {
+    studentId,
+    studentCode: safeCode,
+    fullName: safeName,
+    className: safeClass,
+    campus: (student.campus || 'Trường chính').trim().slice(0, 80),
+    teacherName: (student.teacherName || 'Giáo viên chủ nhiệm').trim().slice(0, 120),
+    academicEvaluation: student.academicEvaluation || 'Hoàn thành',
+    conductEvaluation: student.conductEvaluation || 'Đạt',
+    awards: (student.awards || '').trim().slice(0, 500),
+    teacherComment: (student.teacherComment || '').trim().slice(0, 1000),
+    academicYear: (student.academicYear || '2026 - 2027').trim().slice(0, 30),
+    semester: (student.semester || 'Cả năm').trim().slice(0, 40),
+    updatedAt: new Date().toISOString().slice(0, 40),
+  };
+}
+
+export interface StudentMigrationReport {
+  totalInput: number;
+  syncedCount: number;
+  verifiedCount: number;
+  verifiedMatchedCount: number;
+  missingVerifiedIds: string[];
+  originalCountBefore: number;
+  originalCountAfter: number;
+  originalIntact: boolean;
+  syncedIds: string[];
+  failedItems: { studentCode: string; reason: string }[];
+}
+
+export async function syncStudentsToStudentResults(
+  students: StudentRecord[]
+): Promise<StudentMigrationReport> {
+  if (isTrustedPreviewEnvironment()) {
+    throw new Error('Chế độ xem trước AI Studio không đồng bộ studentResults lên Firebase Production.');
+  }
+  if (!session || !hasPermission('admin')) {
+    throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới có quyền đồng bộ kết quả học tập.');
+  }
+  const conf = getFirebaseConfig();
+  if (!conf.projectId) {
+    throw new Error('Chưa cấu hình Firebase Project ID.');
+  }
+
+  const deduped = deduplicateStudents(students || []);
+  if (deduped.length === 0) {
+    throw new Error('Không có bản ghi học sinh hợp lệ để đồng bộ sang studentResults.');
+  }
+
+  const syncedIds: string[] = [];
+  const failedItems: { studentCode: string; reason: string }[] = [];
+
+  for (const st of deduped) {
+    const record = buildStudentResultRecord(st);
+    const url = documentByIdEndpoint(conf.projectId, 'studentResults', record.studentId);
+    try {
+      const res = await authenticatedFirestoreFetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: toFirestoreFields(record) }),
+      });
+      await checked(res);
+      syncedIds.push(record.studentId);
+    } catch (err: any) {
+      failedItems.push({
+        studentCode: record.studentCode,
+        reason: err?.message || 'Lỗi ghi Firestore',
+      });
+    }
+  }
+
+  let verifiedCount = 0;
+  let verifiedMatchedCount = 0;
+  let missingVerifiedIds: string[] = [];
+
+  try {
+    const existing = await fetchStudentResultsForAdmin();
+    verifiedCount = existing.length;
+    const existingIdSet = new Set(existing.map((item) => item.studentId));
+    missingVerifiedIds = syncedIds.filter((id) => !existingIdSet.has(id));
+    verifiedMatchedCount = syncedIds.length - missingVerifiedIds.length;
+  } catch (verifyErr: any) {
+    missingVerifiedIds = [...syncedIds];
+    failedItems.push({
+      studentCode: 'VERIFY',
+      reason: verifyErr?.message || 'Không thể đọc lại collection studentResults để đối chiếu.',
+    });
+  }
+
+  return {
+    totalInput: deduped.length,
+    syncedCount: syncedIds.length,
+    verifiedCount,
+    verifiedMatchedCount,
+    missingVerifiedIds,
+    originalCountBefore: deduped.length,
+    originalCountAfter: deduped.length,
+    originalIntact: true,
+    syncedIds,
+    failedItems,
+  };
+}
+
+/**
+ * Quy trình chuyển đổi có kiểm soát từ dữ liệu gốc siteData/privateStudents sang studentResults/{studentId}:
+ * 1. Đọc trực tiếp danh sách gốc từ siteData/privateStudents (không dùng nháp chưa lưu).
+ * 2. Sao chép an toàn từng học sinh bằng ID ổn định sang studentResults/{studentId}.
+ * 3. Đọc lại studentResults để đối chiếu từng bản ghi đã ghi đủ.
+ * 4. Đọc lại siteData/privateStudents để xác nhận dữ liệu gốc vẫn còn nguyên vẹn 100% (không xóa).
+ */
+export async function migratePrivateStudentsToStudentResults(): Promise<StudentMigrationReport> {
+  if (isTrustedPreviewEnvironment()) {
+    throw new Error('Chế độ xem trước AI Studio không chạy chuyển đổi dữ liệu trên Firebase Production.');
+  }
+  if (!session || !hasPermission('admin')) {
+    throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới được phép sao chép dữ liệu sang studentResults.');
+  }
+
+  const originalBefore = await loadPrivateStudents();
+  if (!Array.isArray(originalBefore) || originalBefore.length === 0) {
+    throw new Error('Không tìm thấy dữ liệu học sinh gốc trong siteData/privateStudents để sao chép.');
+  }
+
+  const report = await syncStudentsToStudentResults(originalBefore);
+
+  const originalAfter = await loadPrivateStudents();
+  const originalCountBefore = originalBefore.length;
+  const originalCountAfter = Array.isArray(originalAfter) ? originalAfter.length : 0;
+  const originalIntact = originalCountAfter === originalCountBefore;
+
+  return {
+    ...report,
+    originalCountBefore,
+    originalCountAfter,
+    originalIntact,
+  };
+}
+
+export async function fetchStudentResultsForAdmin(): Promise<StudentResultRecord[]> {
+  if (isTrustedPreviewEnvironment()) return [];
+  if (!session || !hasPermission('admin')) {
+    throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới được đọc danh sách studentResults.');
+  }
+  const conf = getFirebaseConfig();
+  if (!conf.projectId) return [];
+
+  const allItems: StudentResultRecord[] = [];
+  let pageToken: string | undefined;
+  let pages = 0;
+
+  do {
+    let url = `${collectionEndpoint(conf.projectId, 'studentResults')}?pageSize=100`;
+    if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    const res = await authenticatedFirestoreFetch(url, { cache: 'no-store' });
+    if (res.status === 404) break;
+    const data = await checked(res);
+    const docs: any[] = data.documents || [];
+    for (const d of docs) {
+      const p = fromFirestoreDocument(d);
+      allItems.push({
+        studentId: p.studentId || p.id,
+        studentCode: p.studentCode || p.id,
+        fullName: p.fullName || '',
+        className: p.className || '',
+        campus: p.campus || 'Trường chính',
+        teacherName: p.teacherName || '',
+        academicEvaluation: (p.academicEvaluation || 'Hoàn thành') as StudentResultRecord['academicEvaluation'],
+        conductEvaluation: (p.conductEvaluation || 'Đạt') as StudentResultRecord['conductEvaluation'],
+        awards: p.awards || '',
+        teacherComment: p.teacherComment || '',
+        academicYear: p.academicYear || '2026 - 2027',
+        semester: p.semester || 'Cả năm',
+        updatedAt: p.updatedAt || '',
+      });
+    }
+    pageToken = data.nextPageToken;
+    pages += 1;
+  } while (pageToken && pages < 10);
+
+  return allItems;
+}
+
+/* ==========================================================================
+   Parent Links Management (parentLinks/{parentUid} - Admin Only)
+   ========================================================================== */
+
+export async function fetchParentLinksForAdmin(): Promise<ParentLinkRecord[]> {
+  if (isTrustedPreviewEnvironment()) return [];
+  if (!session || !hasPermission('admin')) {
+    throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới được xem danh sách liên kết phụ huynh.');
+  }
+  const conf = getFirebaseConfig();
+  if (!conf.projectId) return [];
+
+  const url = `${collectionEndpoint(conf.projectId, 'parentLinks')}?pageSize=100`;
+  const res = await authenticatedFirestoreFetch(url, { cache: 'no-store' });
+  if (res.status === 404) return [];
+  const data = await checked(res);
+  const docs: any[] = data.documents || [];
+
+  const items: ParentLinkRecord[] = docs.map((d) => {
+    const p = fromFirestoreDocument(d);
+    return {
+      parentUid: p.parentUid || p.id,
+      parentEmail: p.parentEmail || '',
+      parentName: p.parentName || '',
+      studentIds: Array.isArray(p.studentIds) ? p.studentIds : [],
+      studentCodes: Array.isArray(p.studentCodes) ? p.studentCodes : [],
+      updatedAt: p.updatedAt || '',
+      updatedBy: p.updatedBy || '',
+    };
+  });
+
+  items.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  return items;
+}
+
+export async function saveParentLinkForAdmin(input: {
+  parentUid: string;
+  parentEmail: string;
+  parentName?: string;
+  studentIds: string[];
+  studentCodes: string[];
+}): Promise<ParentLinkRecord> {
+  if (isTrustedPreviewEnvironment()) {
+    throw new Error('Chế độ xem trước AI Studio không ghi parentLinks lên Firebase Production.');
+  }
+  if (!session || !hasPermission('admin')) {
+    throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới được liên kết tài khoản phụ huynh.');
+  }
+  const conf = getFirebaseConfig();
+  if (!conf.projectId) throw new Error('Chưa cấu hình Firebase Project ID.');
+
+  const parentUid = input.parentUid.trim();
+  const parentEmail = input.parentEmail.trim();
+  const parentName = (input.parentName || '').trim();
+  const uniqueIds = Array.from(new Set(input.studentIds.map((id) => id.trim()).filter(Boolean)));
+  const uniqueCodes = Array.from(new Set(input.studentCodes.map((c) => c.trim()).filter(Boolean)));
+
+  if (parentUid.length < 6 || parentUid.length > 128 || /[/\s]/.test(parentUid)) {
+    throw new Error('UID tài khoản phụ huynh không hợp lệ (lấy từ Firebase Console → Authentication → Users).');
+  }
+  if (!parentEmail.includes('@') || parentEmail.length < 5 || parentEmail.length > 120) {
+    throw new Error('Email phụ huynh không hợp lệ.');
+  }
+  if (uniqueIds.length === 0) {
+    throw new Error('Vui lòng chọn ít nhất 1 học sinh để liên kết với tài khoản phụ huynh này.');
+  }
+  if (uniqueIds.length > 10) {
+    throw new Error('Mỗi tài khoản phụ huynh chỉ được liên kết tối đa 10 học sinh.');
+  }
+
+  const record: ParentLinkRecord = {
+    parentUid,
+    parentEmail,
+    parentName,
+    studentIds: uniqueIds,
+    studentCodes: uniqueCodes,
+    updatedAt: new Date().toISOString(),
+    updatedBy: session.email,
+  };
+
+  const url = documentByIdEndpoint(conf.projectId, 'parentLinks', parentUid);
+  const res = await authenticatedFirestoreFetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: toFirestoreFields(record) }),
+  });
+  await checked(res);
+  return record;
+}
+
+export async function deleteParentLinkForAdmin(parentUid: string): Promise<void> {
+  if (isTrustedPreviewEnvironment()) return;
+  if (!session || !hasPermission('admin')) {
+    throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới được hủy liên kết phụ huynh.');
+  }
+  const conf = getFirebaseConfig();
+  if (!conf.projectId) throw new Error('Chưa cấu hình Firebase Project ID.');
+
+  const url = documentByIdEndpoint(conf.projectId, 'parentLinks', parentUid.trim());
+  const res = await authenticatedFirestoreFetch(url, { method: 'DELETE' });
+  await checked(res);
+}
+
+/* ==========================================================================
+   Document Submissions Moderation (documentSubmissions/{id} - Admin Only)
+   ========================================================================== */
+
+export async function fetchDocumentSubmissionsForAdmin(): Promise<DocumentSubmission[]> {
+  if (isTrustedPreviewEnvironment()) return [];
+  if (!session || !hasPermission('admin')) {
+    throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới được xem danh sách học liệu chờ duyệt.');
+  }
+  const conf = getFirebaseConfig();
+  if (!conf.projectId) return [];
+
+  const url = `${collectionEndpoint(conf.projectId, 'documentSubmissions')}?pageSize=100`;
+  const res = await authenticatedFirestoreFetch(url, { cache: 'no-store' });
+  if (res.status === 404) return [];
+  const data = await checked(res);
+  const docs: any[] = data.documents || [];
+
+  const items: DocumentSubmission[] = docs.map((d) => {
+    const p = fromFirestoreDocument(d);
+    return {
+      id: p.id,
+      title: p.title || '',
+      category: (p.category || 'giao-an') as DocumentSubmission['category'],
+      categoryLabel: p.categoryLabel || 'Tài Liệu Học Tập',
+      description: p.description || '',
+      fileType: p.fileType || 'Link trực tuyến',
+      fileSize: p.fileSize || 'Liên kết trực tuyến',
+      downloadUrl: p.downloadUrl || '',
+      submittedByUid: p.submittedByUid || '',
+      submittedByEmail: p.submittedByEmail || '',
+      submittedByName: p.submittedByName || '',
+      status: (p.status === 'approved' || p.status === 'rejected' ? p.status : 'pending') as DocumentSubmission['status'],
+      createdAt: p.createdAt || '',
+      updatedAt: p.updatedAt || '',
+      reviewNote: p.reviewNote || '',
+      reviewedBy: p.reviewedBy || '',
+      reviewedAt: p.reviewedAt || '',
+    };
+  });
+
+  items.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  return items;
+}
+
+export async function updateDocumentSubmissionStatusForAdmin(
+  id: string,
+  status: 'approved' | 'rejected' | 'pending',
+  reviewNote = ''
+): Promise<void> {
+  if (isTrustedPreviewEnvironment()) return;
+  if (!session || !hasPermission('admin')) {
+    throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới được duyệt học liệu.');
+  }
+  const conf = getFirebaseConfig();
+  if (!conf.projectId) throw new Error('Chưa cấu hình Firebase Project ID.');
+
+  const nowIso = new Date().toISOString();
+  const url =
+    documentByIdEndpoint(conf.projectId, 'documentSubmissions', id) +
+    '?updateMask.fieldPaths=status&updateMask.fieldPaths=reviewNote&updateMask.fieldPaths=reviewedBy&updateMask.fieldPaths=reviewedAt&updateMask.fieldPaths=updatedAt';
+
+  const res = await authenticatedFirestoreFetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fields: toFirestoreFields({
+        status,
+        reviewNote: reviewNote.trim().slice(0, 500),
+        reviewedBy: session.email,
+        reviewedAt: nowIso,
+        updatedAt: nowIso,
+      }),
+    }),
+  });
+  await checked(res);
+}
+
+export async function deleteDocumentSubmissionForAdmin(id: string): Promise<void> {
+  if (isTrustedPreviewEnvironment()) return;
+  if (!session || !hasPermission('admin')) {
+    throw new Error('Từ chối truy cập: Chỉ Quản trị viên mới được xóa đề xuất học liệu.');
+  }
+  const conf = getFirebaseConfig();
+  if (!conf.projectId) throw new Error('Chưa cấu hình Firebase Project ID.');
+
+  const url = documentByIdEndpoint(conf.projectId, 'documentSubmissions', id);
+  const res = await authenticatedFirestoreFetch(url, { method: 'DELETE' });
+  await checked(res);
+}
+
+/* ==========================================================================
+   Member Profiles Listing (memberProfiles/{uid} - Admin Only)
+   ========================================================================== */
+
+export async function fetchMemberProfilesForAdmin(): Promise<MemberUser[]> {
+  if (isTrustedPreviewEnvironment()) return [];
+  if (!session || !hasPermission('admin')) return [];
+  const conf = getFirebaseConfig();
+  if (!conf.projectId) return [];
+
+  const url = `${collectionEndpoint(conf.projectId, 'memberProfiles')}?pageSize=100`;
+  const res = await authenticatedFirestoreFetch(url, { cache: 'no-store' });
+  if (res.status === 404) return [];
+  const data = await checked(res);
+  const docs: any[] = data.documents || [];
+
+  const items: MemberUser[] = docs.map((d) => {
+    const p = fromFirestoreDocument(d);
+    return {
+      id: p.uid || p.id,
+      uid: p.uid || p.id,
+      email: p.email || '',
+      name: p.displayName || p.email || 'Thành viên',
+      role: 'Thành viên',
+      photoURL: p.photoURL || undefined,
+      provider: p.provider === 'password' ? 'password' : 'google',
+      loginAt: p.lastLoginAt ? new Date(p.lastLoginAt).toLocaleString('vi-VN') : '',
+    };
+  });
+
+  items.sort((a, b) => (b.loginAt || '').localeCompare(a.loginAt || ''));
+  return items;
+}
+
