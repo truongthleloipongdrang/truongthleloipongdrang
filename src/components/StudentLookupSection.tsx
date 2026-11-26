@@ -1138,7 +1138,7 @@ export const StudentLookupSection: React.FC<StudentLookupSectionProps> = ({
             )}
           </div>
 
-          {/* Right: Instructions & Admin Entry */}
+          {/* Right: Parent Safe Lookup Instructions */}
           <div className="lg:col-span-5 bg-white border border-slate-200 rounded-3xl p-6 sm:p-7 shadow-sm space-y-5">
             <div className="space-y-2">
               <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
@@ -1156,20 +1156,6 @@ export const StudentLookupSection: React.FC<StudentLookupSectionProps> = ({
                   • <strong>Bước 3:</strong> Hệ thống chỉ tải duy nhất kết quả học tập, rèn luyện và nhận xét của con em đã được liên kết với tài khoản phụ huynh.
                 </li>
               </ul>
-            </div>
-
-            <div className="pt-4 border-t border-slate-100 space-y-2.5">
-              <p className="text-xs font-bold text-slate-700">
-                Dành cho Ban Giám Hiệu / Quản trị nhà trường:
-              </p>
-              <button
-                type="button"
-                onClick={onOpenAdmin}
-                className="w-full inline-flex items-center justify-center space-x-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold px-4 py-2.5 rounded-xl text-xs transition-all cursor-pointer"
-              >
-                <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                <span>Đăng Nhập Tài Khoản Quản Trị</span>
-              </button>
             </div>
           </div>
         </div>
