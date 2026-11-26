@@ -14,15 +14,19 @@ import {
   Maximize2,
   MapPin,
   School,
-  CheckCircle2,
+  Images,
+  Video,
+  Settings2,
 } from 'lucide-react';
 import { ActivityItem, EditableCardPayload } from '../types';
+import { getActivityCategoryLabel, parseYouTubeUrl } from '../mediaHelpers';
 
 interface ActivitiesSectionProps {
   activities: ActivityItem[];
   isAdmin: boolean;
   onEditCard: (payload: EditableCardPayload) => void;
   onToggleHighlightActivity?: (actId: string) => void;
+  onOpenActivitiesManager?: () => void;
 }
 
 export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
@@ -30,9 +34,11 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
   isAdmin,
   onEditCard,
   onToggleHighlightActivity,
+  onOpenActivitiesManager,
 }) => {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [selectedActivity, setSelectedActivity] = useState<ActivityItem | null>(null);
+  const [activeModalImage, setActiveModalImage] = useState<string>('');
 
   // Close modal on Escape key
   useEffect(() => {
@@ -45,21 +51,39 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const openActivityDetail = (act: ActivityItem) => {
+    setSelectedActivity(act);
+    setActiveModalImage(act.imageUrl);
+  };
+
   const categories = [
     { id: 'all', label: 'Tất Cả' },
-    { id: 'day-hoc', label: 'Dạy Học & STEM', icon: BookOpen },
-    { id: 'ngoai-khoa', label: 'Ngoại khoá', icon: Compass },
+    { id: 'day-hoc', label: 'Dạy học & STEM', icon: BookOpen },
+    { id: 'ngoai-khoa', label: 'Ngoại khóa', icon: Compass },
     { id: 'doi-tntp', label: 'Phong trào Đội', icon: Flag },
     { id: 'van-nghe', label: 'Văn nghệ', icon: Music },
     { id: 'the-thao', label: 'Thể thao', icon: Trophy },
-    { id: 'trai-nghiem', label: 'Trải Nghiệm', icon: Sparkles },
-    { id: 'chuyen-doi-so', label: 'Chuyển Đổi Số', icon: Monitor },
+    { id: 'trai-nghiem', label: 'Trải nghiệm', icon: Sparkles },
+    { id: 'chuyen-doi-so', label: 'Chuyển đổi số', icon: Monitor },
   ];
 
   const filtered =
     filterCategory === 'all'
       ? activities
       : activities.filter((a) => a.category === filterCategory);
+
+  const selectedGalleryImages = selectedActivity
+    ? Array.from(
+        new Set([
+          selectedActivity.imageUrl,
+          ...(Array.isArray(selectedActivity.images) ? selectedActivity.images : []),
+        ].filter(Boolean))
+      )
+    : [];
+
+  const selectedYouTube = selectedActivity?.videoUrl
+    ? parseYouTubeUrl(selectedActivity.videoUrl)
+    : null;
 
   return (
     <div className="space-y-10 py-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
@@ -75,6 +99,19 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
           Đổi mới phương pháp dạy học, phát triển kỹ năng toàn diện, lan tỏa văn
           hóa bản sắc Tây Nguyên và tiên phong chuyển đổi số học đường.
         </p>
+
+        {isAdmin && onOpenActivitiesManager && (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={onOpenActivitiesManager}
+              className="inline-flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs cursor-pointer transition-colors"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              <span>Quản Lý Hoạt Động (Thêm / Sửa / Xóa)</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 2. Category Filter Tabs */}
@@ -99,118 +136,146 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
       </div>
 
       {/* 3. Activities Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filtered.map((act) => (
-          <div
-            key={act.id}
-            onClick={() => setSelectedActivity(act)}
-            className={`relative group bg-white border rounded-3xl overflow-hidden shadow-xs hover:shadow-xl hover:-translate-y-0.5 transition-all flex flex-col justify-between cursor-pointer ${
-              act.highlight
-                ? 'border-amber-400 ring-2 ring-amber-300/50'
-                : 'border-slate-200 hover:border-emerald-500'
-            }`}
-          >
-            {isAdmin && (
-              <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleHighlightActivity?.(act.id);
-                  }}
-                  className={`font-black px-2.5 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1 transition-all cursor-pointer ${
-                    act.highlight
-                      ? 'bg-amber-400 text-slate-950 ring-1 ring-amber-200'
-                      : 'bg-white/95 text-slate-800 hover:bg-emerald-50'
-                  }`}
-                  title={
-                    act.highlight
-                      ? 'Hủy nổi bật hoạt động trên Trang Chủ'
-                      : 'Làm nổi bật hoạt động trên Trang Chủ'
-                  }
-                >
-                  <Sparkles className="w-3 h-3" />
-                  <span>{act.highlight ? 'Đang nổi bật' : 'Nổi bật'}</span>
-                </button>
+      {filtered.length === 0 ? (
+        <div className="text-center py-12 bg-white border border-slate-200 rounded-3xl text-slate-500 text-sm">
+          Chưa có hoạt động nào trong danh mục này.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filtered.map((act) => {
+            const extraPhotosCount = Array.isArray(act.images) ? act.images.length : 0;
+            const hasVideo = Boolean(act.videoUrl && parseYouTubeUrl(act.videoUrl).embedUrl);
 
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEditCard({
-                      sectionKey: 'activities',
-                      itemId: act.id,
-                      title: act.title,
-                      subtitle: act.categoryLabel,
-                      content: act.description,
-                      imageUrl: act.imageUrl,
-                      category: act.category,
-                      highlight: act.highlight,
-                      extraField1Label: 'Lịch hoạt động',
-                      extraField1Value: act.date,
-                    });
-                  }}
-                  className="bg-slate-900 hover:bg-black text-white font-bold px-2.5 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1 cursor-pointer"
-                >
-                  <Edit className="w-3 h-3" />
-                  <span>Sửa</span>
-                </button>
-              </div>
-            )}
+            return (
+              <div
+                key={act.id}
+                onClick={() => openActivityDetail(act)}
+                className={`relative group bg-white border rounded-3xl overflow-hidden shadow-xs hover:shadow-xl hover:-translate-y-0.5 transition-all flex flex-col justify-between cursor-pointer ${
+                  act.highlight
+                    ? 'border-amber-400 ring-2 ring-amber-300/50'
+                    : 'border-slate-200 hover:border-emerald-500'
+                }`}
+              >
+                {isAdmin && (
+                  <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleHighlightActivity?.(act.id);
+                      }}
+                      className={`font-black px-2.5 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1 transition-all cursor-pointer ${
+                        act.highlight
+                          ? 'bg-amber-400 text-slate-950 ring-1 ring-amber-200'
+                          : 'bg-white/95 text-slate-800 hover:bg-emerald-50'
+                      }`}
+                      title={
+                        act.highlight
+                          ? 'Hủy nổi bật hoạt động trên Trang Chủ'
+                          : 'Làm nổi bật hoạt động trên Trang Chủ'
+                      }
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>{act.highlight ? 'Đang nổi bật' : 'Nổi bật'}</span>
+                    </button>
 
-            <div>
-              <div className="h-52 overflow-hidden relative">
-                <img
-                  src={act.imageUrl}
-                  alt={act.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                />
-                {/* Overlay hover badge */}
-                <div className="absolute inset-0 bg-slate-950/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
-                  <span className="bg-slate-900/85 text-white text-[11px] font-bold px-3 py-1.5 rounded-full backdrop-blur-xs flex items-center gap-1.5 shadow-md">
-                    <Maximize2 className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Phóng to xem đầy đủ</span>
-                  </span>
-                </div>
-
-                {act.highlight && (
-                  <span className="absolute top-3 left-3 bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-[10px] px-2.5 py-0.5 rounded-full shadow-md flex items-center gap-1 z-10">
-                    <Sparkles className="w-3 h-3" />
-                    <span>TIÊU ĐIỂM TRANG CHỦ</span>
-                  </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditCard({
+                          sectionKey: 'activities',
+                          itemId: act.id,
+                          title: act.title,
+                          subtitle: act.categoryLabel,
+                          content: act.description,
+                          imageUrl: act.imageUrl,
+                          category: act.category,
+                          highlight: act.highlight,
+                          extraField1Label: 'Lịch hoạt động',
+                          extraField1Value: act.date,
+                        });
+                      }}
+                      className="bg-slate-900 hover:bg-black text-white font-bold px-2.5 py-0.5 rounded-full text-[10px] shadow flex items-center space-x-1 cursor-pointer"
+                    >
+                      <Edit className="w-3 h-3" />
+                      <span>Sửa</span>
+                    </button>
+                  </div>
                 )}
-                <span className="absolute bottom-2.5 left-2.5 bg-emerald-900/90 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md backdrop-blur-xs">
-                  {act.categoryLabel}
-                </span>
-              </div>
 
-              <div className="p-6 space-y-3">
-                <div className="flex items-center text-xs text-slate-400">
-                  <Calendar className="w-3.5 h-3.5 mr-1 text-emerald-600" />
-                  <span>{act.date}</span>
+                <div>
+                  <div className="h-52 overflow-hidden relative">
+                    <img
+                      src={act.imageUrl}
+                      alt={act.title}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                    {/* Overlay hover badge */}
+                    <div className="absolute inset-0 bg-slate-950/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                      <span className="bg-slate-900/85 text-white text-[11px] font-bold px-3 py-1.5 rounded-full backdrop-blur-xs flex items-center gap-1.5 shadow-md">
+                        <Maximize2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Phóng to xem đầy đủ</span>
+                      </span>
+                    </div>
+
+                    {act.highlight && (
+                      <span className="absolute top-3 left-3 bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-[10px] px-2.5 py-0.5 rounded-full shadow-md flex items-center gap-1 z-10">
+                        <Sparkles className="w-3 h-3" />
+                        <span>TIÊU ĐIỂM TRANG CHỦ</span>
+                      </span>
+                    )}
+                    <span className="absolute bottom-2.5 left-2.5 bg-emerald-900/90 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md backdrop-blur-xs">
+                      {act.categoryLabel || getActivityCategoryLabel(act.category)}
+                    </span>
+
+                    {(extraPhotosCount > 0 || hasVideo) && (
+                      <div className="absolute bottom-2.5 right-2.5 flex items-center gap-1">
+                        {extraPhotosCount > 0 && (
+                          <span className="bg-slate-900/80 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 backdrop-blur-xs">
+                            <Images className="w-3 h-3 text-emerald-300" />
+                            <span>+{extraPhotosCount}</span>
+                          </span>
+                        )}
+                        {hasVideo && (
+                          <span className="bg-red-600/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 backdrop-blur-xs">
+                            <Video className="w-3 h-3" />
+                            <span>Video</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-6 space-y-3">
+                    <div className="flex items-center text-xs text-slate-400">
+                      <Calendar className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                      <span>{act.date}</span>
+                    </div>
+                    <h3 className="font-bold text-lg text-slate-900 group-hover:text-emerald-700 transition-colors leading-snug">
+                      {act.title}
+                    </h3>
+                    <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
+                      {act.description}
+                    </p>
+                  </div>
                 </div>
-                <h3 className="font-bold text-lg text-slate-900 group-hover:text-emerald-700 transition-colors leading-snug">
-                  {act.title}
-                </h3>
-                <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
-                  {act.description}
-                </p>
-              </div>
-            </div>
 
-            <div className="p-6 pt-0">
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-semibold">
-                <span className="text-slate-500 flex items-center gap-1">
-                  <School className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Trường TH Lê Lợi</span>
-                </span>
-                <span className="inline-flex items-center space-x-1 text-emerald-700 font-bold group-hover:text-emerald-900 transition-colors">
-                  <span>Xem chi tiết</span>
-                  <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                </span>
+                <div className="p-6 pt-0">
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-semibold">
+                    <span className="text-slate-500 flex items-center gap-1">
+                      <School className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Trường TH Lê Lợi</span>
+                    </span>
+                    <span className="inline-flex items-center space-x-1 text-emerald-700 font-bold group-hover:text-emerald-900 transition-colors">
+                      <span>Xem chi tiết</span>
+                      <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        ))}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* 4. Reader Modal for Enlarge Activity Details View */}
       {selectedActivity && (
@@ -225,7 +290,7 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
             {/* Modal Image Header */}
             <div className="relative h-64 sm:h-80 overflow-hidden shrink-0 bg-slate-900">
               <img
-                src={selectedActivity.imageUrl}
+                src={activeModalImage || selectedActivity.imageUrl}
                 alt={selectedActivity.title}
                 className="w-full h-full object-cover"
               />
@@ -238,7 +303,7 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
               </button>
               <div className="absolute bottom-4 left-4 flex flex-wrap items-center gap-2">
                 <span className="bg-emerald-800 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-md">
-                  {selectedActivity.categoryLabel}
+                  {selectedActivity.categoryLabel || getActivityCategoryLabel(selectedActivity.category)}
                 </span>
                 {selectedActivity.highlight && (
                   <span className="bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl shadow-md flex items-center gap-1">
@@ -251,10 +316,40 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
 
             {/* Modal Content Body */}
             <div className="p-6 sm:p-8 overflow-y-auto space-y-5">
+              {/* Thumbnail switcher when activity has multiple images */}
+              {selectedGalleryImages.length > 1 && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <Images className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Thư viện hình ảnh hoạt động ({selectedGalleryImages.length} ảnh)</span>
+                  </div>
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                    {selectedGalleryImages.map((imgUrl, idx) => (
+                      <button
+                        key={`${imgUrl}-${idx}`}
+                        type="button"
+                        onClick={() => setActiveModalImage(imgUrl)}
+                        className={`w-20 h-14 rounded-xl overflow-hidden border-2 shrink-0 cursor-pointer transition-all ${
+                          (activeModalImage || selectedActivity.imageUrl) === imgUrl
+                            ? 'border-emerald-600 ring-2 ring-emerald-200'
+                            : 'border-slate-200 opacity-75 hover:opacity-100'
+                        }`}
+                      >
+                        <img
+                          src={imgUrl}
+                          alt={`${selectedActivity.title} - Ảnh ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center text-xs text-slate-500 gap-3 pb-2 border-b border-slate-100">
                 <span className="flex items-center text-emerald-700 font-bold">
                   <Calendar className="w-4 h-4 mr-1.5 text-emerald-600" />
-                  Lịch hoạt động: {selectedActivity.date}
+                  Ngày tổ chức: {selectedActivity.date}
                 </span>
                 <span>•</span>
                 <span className="flex items-center text-slate-600">
@@ -280,6 +375,25 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
               {selectedActivity.content && selectedActivity.content !== selectedActivity.description && (
                 <div className="text-sm text-slate-800 leading-relaxed space-y-3 whitespace-pre-line pt-1">
                   {selectedActivity.content}
+                </div>
+              )}
+
+              {/* Embedded YouTube video if provided */}
+              {selectedYouTube?.valid && selectedYouTube.embedUrl && (
+                <div className="space-y-2 pt-1">
+                  <div className="text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
+                    <Video className="w-4 h-4 text-red-600" />
+                    <span>Video hoạt động</span>
+                  </div>
+                  <div className="aspect-video w-full rounded-2xl overflow-hidden border border-slate-200 bg-black shadow-xs">
+                    <iframe
+                      src={selectedYouTube.embedUrl}
+                      title={selectedActivity.title}
+                      className="w-full h-full"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  </div>
                 </div>
               )}
 
@@ -341,3 +455,4 @@ export const ActivitiesSection: React.FC<ActivitiesSectionProps> = ({
     </div>
   );
 };
+

@@ -69,7 +69,11 @@ import {
   DocumentSubmission,
   AdmissionRegistration,
   FeedbackSubmission,
+  AdminTabKey,
 } from '../types';
+import { AdminActivitiesManager } from './AdminActivitiesManager';
+import { AdminGalleryManager } from './AdminGalleryManager';
+import { getPublicContentByteSize } from '../mediaHelpers';
 import {
   exportContentAsJson,
   fetchRemoteSiteContent,
@@ -131,17 +135,7 @@ interface AdminModalProps {
   onSaveContent: (newContent: SiteContent, published?: boolean) => void;
   onResetContent: () => void;
   memberLogList: MemberUser[];
-  initialTab?:
-    | 'school'
-    | 'staff'
-    | 'news'
-    | 'students'
-    | 'documents'
-    | 'members'
-    | 'admissions_registrations'
-    | 'feedback'
-    | 'password'
-    | 'sync';
+  initialTab?: AdminTabKey;
 }
 
 export const AdminModal: React.FC<AdminModalProps> = ({
@@ -206,18 +200,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [fbSaveMsg, setFbSaveMsg] = useState('');
 
   // Active dashboard tab
-  const [activeTab, setActiveTab] = useState<
-    | 'school'
-    | 'staff'
-    | 'news'
-    | 'students'
-    | 'documents'
-    | 'members'
-    | 'admissions_registrations'
-    | 'feedback'
-    | 'password'
-    | 'sync'
-  >(initialTab || 'school');
+  const [activeTab, setActiveTab] = useState<AdminTabKey>(initialTab || 'school');
 
   // Admissions registrations state
   const [admissionsList, setAdmissionsList] = useState<AdmissionRegistration[]>(() =>
@@ -910,8 +893,20 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           savedStudentsCount = verifiedStudents.length;
         }
 
-        await saveOnlineContent(draft);
-        onSaveContent(draft, true);
+        const contentToPublish: SiteContent = {
+          ...draft,
+          contentManaged: true,
+        };
+        const payloadBytes = getPublicContentByteSize(contentToPublish);
+        if (payloadBytes >= 890000) {
+          throw new Error(
+            `Dung lượng nội dung công khai (${Math.round(payloadBytes / 1024)} KB) vượt giới hạn an toàn 890 KB của tài liệu siteData/publicContent. Hãy rút gọn mô tả dài hoặc xóa bớt mục không dùng.`
+          );
+        }
+
+        await saveOnlineContent(contentToPublish);
+        setDraft((prev) => ({ ...prev, contentManaged: true }));
+        onSaveContent(contentToPublish, true);
         setStatusMsg({
           type: 'success',
           text:
@@ -1517,6 +1512,26 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 📰 Tin Tức & Thông Báo ({draft.news.length})
               </button>
               <button
+                onClick={() => setActiveTab('activities')}
+                className={`text-left px-3 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                  activeTab === 'activities'
+                    ? 'bg-emerald-700 text-white'
+                    : 'text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                🎯 Quản Lý Hoạt Động ({draft.activities.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('gallery')}
+                className={`text-left px-3 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                  activeTab === 'gallery'
+                    ? 'bg-emerald-700 text-white'
+                    : 'text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                🖼️ Quản Lý Thư Viện Ảnh ({draft.gallery.length + (draft.galleryAlbums || []).length})
+              </button>
+              <button
                 onClick={() => setActiveTab('students')}
                 className={`text-left px-3 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                   activeTab === 'students'
@@ -2103,6 +2118,68 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     ))}
                   </div>
                 </div>
+              )}
+
+              {/* TAB 3B: QUẢN LÝ HOẠT ĐỘNG */}
+              {activeTab === 'activities' && (
+                <AdminActivitiesManager
+                  isAdmin={isAdmin}
+                  activities={draft.activities}
+                  savingOnline={savingOnline}
+                  isFirebaseOnline={!isPreviewSession && isOnlineAuthenticated()}
+                  hasUnsavedChanges={
+                    JSON.stringify(draft.activities) !== JSON.stringify(content.activities)
+                  }
+                  onChangeActivities={(nextActivities) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      activities: nextActivities,
+                      contentManaged: true,
+                    }))
+                  }
+                  onSaveToFirebase={() => {
+                    void handleSaveDraft();
+                  }}
+                  onBackupCurrentContent={() => {
+                    void downloadPublicBackup();
+                  }}
+                />
+              )}
+
+              {/* TAB 3C: QUẢN LÝ THƯ VIỆN ẢNH */}
+              {activeTab === 'gallery' && (
+                <AdminGalleryManager
+                  isAdmin={isAdmin}
+                  gallery={draft.gallery}
+                  albums={draft.galleryAlbums || []}
+                  savingOnline={savingOnline}
+                  isFirebaseOnline={!isPreviewSession && isOnlineAuthenticated()}
+                  hasUnsavedChanges={
+                    JSON.stringify(draft.gallery) !== JSON.stringify(content.gallery) ||
+                    JSON.stringify(draft.galleryAlbums || []) !==
+                      JSON.stringify(content.galleryAlbums || [])
+                  }
+                  onChangeGallery={(nextGallery) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      gallery: nextGallery,
+                      contentManaged: true,
+                    }))
+                  }
+                  onChangeAlbums={(nextAlbums) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      galleryAlbums: nextAlbums,
+                      contentManaged: true,
+                    }))
+                  }
+                  onSaveToFirebase={() => {
+                    void handleSaveDraft();
+                  }}
+                  onBackupCurrentContent={() => {
+                    void downloadPublicBackup();
+                  }}
+                />
               )}
 
               {/* TAB 4: STUDENTS */}

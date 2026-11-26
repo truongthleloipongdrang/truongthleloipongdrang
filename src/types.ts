@@ -130,7 +130,10 @@ export interface ActivityItem {
   description: string;
   content?: string;
   imageUrl: string;
+  images?: string[];
+  videoUrl?: string;
   highlight?: boolean;
+  order?: number;
 }
 
 export interface AdmissionStep {
@@ -256,14 +259,51 @@ export interface ParentLinkRecord {
   updatedBy?: string;
 }
 
+export type GalleryCategory = 'hoat-dong' | 'co-so-vat-chat' | 'su-kien' | string;
+
 export interface GalleryItem {
   id: string;
   title: string;
-  category: 'hoat-dong' | 'co-so-vat-chat' | 'su-kien';
+  category: GalleryCategory;
   imageUrl: string;
   caption: string;
   date: string;
+  order?: number;
 }
+
+export interface GalleryAlbumPhoto {
+  id: string;
+  imageUrl: string;
+  title?: string;
+  caption?: string;
+  date?: string;
+  order?: number;
+}
+
+export interface GalleryAlbum {
+  id: string;
+  title: string;
+  category: GalleryCategory;
+  description: string;
+  date: string;
+  coverImageUrl: string;
+  photos: GalleryAlbumPhoto[];
+  order?: number;
+}
+
+export type AdminTabKey =
+  | 'school'
+  | 'staff'
+  | 'news'
+  | 'activities'
+  | 'gallery'
+  | 'students'
+  | 'documents'
+  | 'members'
+  | 'admissions_registrations'
+  | 'feedback'
+  | 'password'
+  | 'sync';
 
 export interface DocumentItem {
   id: string;
@@ -328,6 +368,8 @@ export interface SiteContent {
   admissions: AdmissionsData;
   students: StudentRecord[];
   gallery: GalleryItem[];
+  galleryAlbums?: GalleryAlbum[];
+  contentManaged?: boolean;
   documents: DocumentItem[];
   history: string;
   historyTitle?: string;

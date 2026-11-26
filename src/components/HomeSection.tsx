@@ -18,6 +18,7 @@ import {
   Maximize2,
 } from 'lucide-react';
 import { SiteContent, EditableCardPayload, NavSection, NewsItem, ActivityItem } from '../types';
+import { parseYouTubeUrl } from '../mediaHelpers';
 
 interface HomeSectionProps {
   content: SiteContent;
@@ -763,6 +764,35 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                   {selectedActivity.content}
                 </div>
               )}
+
+              {selectedActivity.images && selectedActivity.images.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                  {selectedActivity.images.map((imgUrl, idx) => (
+                    <img
+                      key={`${imgUrl}-${idx}`}
+                      src={imgUrl}
+                      alt={`${selectedActivity.title} - Ảnh ${idx + 1}`}
+                      className="w-full h-28 object-cover rounded-xl border border-slate-200"
+                    />
+                  ))}
+                </div>
+              )}
+
+              {(() => {
+                const yt = parseYouTubeUrl(selectedActivity.videoUrl);
+                if (!yt.valid || !yt.embedUrl) return null;
+                return (
+                  <div className="aspect-video w-full rounded-2xl overflow-hidden border border-slate-200 bg-black">
+                    <iframe
+                      src={yt.embedUrl}
+                      title={selectedActivity.title}
+                      className="w-full h-full"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  </div>
+                );
+              })()}
 
               {/* Informative metadata cards */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
