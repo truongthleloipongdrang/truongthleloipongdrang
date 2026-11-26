@@ -5,15 +5,22 @@ import {
   logoutOnline,
   isOnlineAuthenticated,
   saveOnlineContent,
-  savePrivateStudents,
-  loadPrivateStudents,
   loadOnlineContent,
   getFirebaseConfig,
   saveFirebaseConfig,
   isFirebaseConfigured,
   getAdminRole,
   getOnlineSession,
+  migratePrivateStudentsToStudentResults,
+  fetchParentLinksForAdmin,
+  saveParentLinkForAdmin,
+  deleteParentLinkForAdmin,
+  fetchDocumentSubmissionsForAdmin,
+  updateDocumentSubmissionStatusForAdmin,
+  deleteDocumentSubmissionForAdmin,
+  fetchMemberProfilesForAdmin,
 } from '../onlineStore';
+import { toSafeStudentResultDocId, validateDocumentUrl } from '../urlValidation';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -32,6 +39,7 @@ import {
   Users,
   FileText,
   Calendar,
+  Star,
   AlertTriangle,
   Github,
   CheckCircle2,
@@ -57,6 +65,8 @@ import {
   StudentRecord,
   DocumentItem,
   MemberUser,
+  ParentLinkRecord,
+  DocumentSubmission,
   AdmissionRegistration,
   FeedbackSubmission,
 } from '../types';
@@ -94,6 +104,8 @@ import {
   downloadStudentExcelTemplate,
   exportStudentsToExcel,
   parseStudentExcelFile,
+  deduplicateStudents,
+  mergeStudentLists,
 } from '../studentExcelHelper';
 import {
   isTrustedPreviewEnvironment,
@@ -109,6 +121,13 @@ interface AdminModalProps {
   onLoginSuccess: (isPreview?: boolean) => void;
   onLogout: () => void;
   content: SiteContent;
+  privateStudents: StudentRecord[];
+  privateStudentsLoading: boolean;
+  privateStudentsLoaded: boolean;
+  privateStudentsError: string | null;
+  onSyncPrivateStudentsAfterLogin: (isPreview: boolean) => Promise<StudentRecord[]>;
+  onReloadPrivateStudents: () => Promise<StudentRecord[]>;
+  onSavePrivateStudents: (students: StudentRecord[]) => Promise<StudentRecord[]>;
   onSaveContent: (newContent: SiteContent, published?: boolean) => void;
   onResetContent: () => void;
   memberLogList: MemberUser[];
@@ -132,6 +151,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onLoginSuccess,
   onLogout,
   content,
+  privateStudents,
+  privateStudentsLoading,
+  privateStudentsLoaded,
+  privateStudentsError,
+  onSyncPrivateStudentsAfterLogin,
+  onReloadPrivateStudents,
+  onSavePrivateStudents,
   onSaveContent,
   onResetContent,
   memberLogList,
@@ -139,8 +165,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 }) => {
   // Environment-based login authorization
   const canUsePreviewAuth = isTrustedPreviewEnvironment();
-  const [loginMode, setLoginMode] = useState<'firebase' | 'school_master'>(() => isTrustedPreviewEnvironment() ? 'school_master' : 'firebase');
+  const [loginMode, setLoginMode] = useState<'firebase' | 'school_master'>('firebase');
   const [isPreviewSession, setIsPreviewSession] = useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
 
   useEffect(() => {
     if (!canUsePreviewAuth && loginMode !== 'firebase') {
@@ -154,6 +181,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       setPassword('');
       setLoginError('');
       setStudentBaseline(null);
+      setImportPreview(null);
+      setImportError(null);
+      setParentLinks([]);
+      setDocSubmissions([]);
+      setRemoteMembers([]);
+      setMigrationReportMsg(null);
+      setParentLinkMsg(null);
+      setDocSubMsg(null);
+      setDraft((prev) => ({ ...prev, students: [] }));
     }
   }, [isAdmin]);
 
@@ -194,16 +230,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [confirmDeleteRegId, setConfirmDeleteRegId] = useState<string | null>(null);
   const [confirmClearAllAdmissions, setConfirmClearAllAdmissions] = useState(false);
 
-  const handleDeleteAdmissionReg = async (id: string) => {
-    try {
-      await deleteRegistration(id);
+  const handleDeleteAdmissionReg = (id: string) => {
+    deleteRegistration(id);
     setAdmissionsList((prev) => prev.filter((r) => r.id !== id));
     setConfirmDeleteRegId(null);
-    } catch (err) { window.alert("Không xóa được hồ sơ trên Firebase: " + String(err)); }
   };
 
   const handleClearAllAdmissionRegs = () => {
-    window.alert('Chức năng Xóa tất cả đã khóa để bảo vệ hồ sơ thực.');
+    clearAllRegistrations();
+    setAdmissionsList([]);
     setConfirmClearAllAdmissions(false);
   };
 
@@ -220,16 +255,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [syncingAdmissions, setSyncingAdmissions] = useState(false);
   const [syncingFeedback, setSyncingFeedback] = useState(false);
 
-  const handleDeleteFeedbackItem = async (id: string) => {
-    try {
-      await deleteFeedback(id);
+  const handleDeleteFeedbackItem = (id: string) => {
+    deleteFeedback(id);
     setFeedbackList((prev) => prev.filter((f) => f.id !== id));
     setConfirmDeleteFeedbackId(null);
-    } catch (err) { window.alert("Không xóa được ý kiến trên Firebase: " + String(err)); }
   };
 
   const handleClearAllFeedbackItems = () => {
-    window.alert('Chức năng Xóa tất cả đã khóa để bảo vệ ý kiến thực.');
+    clearAllFeedback();
+    setFeedbackList([]);
     setConfirmClearAllFeedback(false);
   };
 
@@ -268,27 +302,63 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const pendingRegistrationsCount = admissionsList.filter((r) => r.status === 'pending').length;
   const pendingFeedbackCount = feedbackList.filter((f) => f.status === 'pending').length;
 
+  // Tự động tải lại danh sách ý kiến đóng góp khi mở tab 'feedback'
+  useEffect(() => {
+    if (isOpen && activeTab === 'feedback') {
+      if (isTrustedPreviewEnvironment()) {
+        setFeedbackList([...MOCK_PREVIEW_FEEDBACK]);
+      } else if (isOnlineAuthenticated()) {
+        syncFeedbackWithFirestore(false)
+          .then((list) => setFeedbackList(list))
+          .catch(() => {});
+      } else {
+        setFeedbackList(getStoredFeedback());
+      }
+    }
+  }, [isOpen, activeTab]);
+
   const filteredFeedback = feedbackList.filter((f) => {
     const q = feedbackSearchQuery.toLowerCase().trim();
+    const fullName = (f.fullName || '').toLowerCase();
+    const phone = f.phone || '';
+    const email = (f.email || '').toLowerCase();
+    const message = (f.message || '').toLowerCase();
     const matchQuery =
       !q ||
-      f.fullName.toLowerCase().includes(q) ||
-      f.phone.includes(q) ||
-      (f.email && f.email.toLowerCase().includes(q)) ||
-      f.message.toLowerCase().includes(q);
+      fullName.includes(q) ||
+      phone.includes(q) ||
+      email.includes(q) ||
+      message.includes(q);
     const matchStatus = feedbackStatusFilter === 'all' || f.status === feedbackStatusFilter;
     return matchQuery && matchStatus;
   });
 
-  // Working copy of content
-  const [draft, setDraft] = useState<SiteContent>(JSON.parse(JSON.stringify(content)));
+  // Working copy of content (tách riêng public content và danh sách học sinh riêng tư đã nạp từ Firebase)
+  const [draft, setDraft] = useState<SiteContent>(() => ({
+    ...JSON.parse(JSON.stringify(content)),
+    students: JSON.parse(JSON.stringify(privateStudents)),
+  }));
 
-  // Always keep draft in sync when content updates or modal opens
+  // Đồng bộ nội dung công khai khi mở modal hoặc khi publicContent thay đổi mà KHÔNG ghi đè danh sách học sinh riêng tư
   useEffect(() => {
     if (isOpen) {
-      setDraft(JSON.parse(JSON.stringify(content)));
+      setDraft((prev) => ({
+        ...JSON.parse(JSON.stringify(content)),
+        students: isAdmin
+          ? (privateStudentsLoaded ? JSON.parse(JSON.stringify(privateStudents)) : prev.students)
+          : [],
+      }));
     }
   }, [isOpen, content]);
+
+  // Đồng bộ danh sách học sinh riêng tư từ App state khi tải xong hoặc sau khi lưu/đối chiếu Firebase
+  useEffect(() => {
+    if (isAdmin && privateStudentsLoaded) {
+      const cloned = JSON.parse(JSON.stringify(privateStudents)) as StudentRecord[];
+      setDraft((prev) => ({ ...prev, students: cloned }));
+      setStudentBaseline(JSON.parse(JSON.stringify(privateStudents)) as StudentRecord[]);
+    }
+  }, [isAdmin, privateStudents, privateStudentsLoaded]);
 
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
@@ -318,6 +388,302 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [importMode, setImportMode] = useState<'append' | 'replace'>('append');
   const [importError, setImportError] = useState<string | null>(null);
 
+  // Student Results Migration & Parent Links Management states (Admin only)
+  const [migratingResults, setMigratingResults] = useState(false);
+  const [migrationReportMsg, setMigrationReportMsg] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+  const [parentLinks, setParentLinks] = useState<ParentLinkRecord[]>([]);
+  const [loadingParentLinks, setLoadingParentLinks] = useState(false);
+  const [savingParentLink, setSavingParentLink] = useState(false);
+  const [parentLinkUidInput, setParentLinkUidInput] = useState('');
+  const [parentLinkEmailInput, setParentLinkEmailInput] = useState('');
+  const [parentLinkNameInput, setParentLinkNameInput] = useState('');
+  const [selectedStudentIdsForParent, setSelectedStudentIdsForParent] = useState<string[]>([]);
+  const [parentLinkMsg, setParentLinkMsg] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+
+  // Document Submissions Moderation states (Admin only)
+  const [docSubmissions, setDocSubmissions] = useState<DocumentSubmission[]>([]);
+  const [loadingDocSubmissions, setLoadingDocSubmissions] = useState(false);
+  const [processingSubId, setProcessingSubId] = useState<string | null>(null);
+  const [docSubMsg, setDocSubMsg] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+
+  // Remote Member Profiles from Firestore (Admin only)
+  const [remoteMembers, setRemoteMembers] = useState<MemberUser[]>([]);
+  const [loadingRemoteMembers, setLoadingRemoteMembers] = useState(false);
+
+  // Tự động tải dữ liệu liên kết phụ huynh / học liệu chờ duyệt / thành viên khi mở đúng tab
+  useEffect(() => {
+    if (!isOpen || !isAdmin || isPreviewSession || !isOnlineAuthenticated()) return;
+
+    if (activeTab === 'students') {
+      setLoadingParentLinks(true);
+      fetchParentLinksForAdmin()
+        .then((list) => setParentLinks(list))
+        .catch(() => {})
+        .finally(() => setLoadingParentLinks(false));
+    } else if (activeTab === 'documents') {
+      setLoadingDocSubmissions(true);
+      fetchDocumentSubmissionsForAdmin()
+        .then((list) => setDocSubmissions(list))
+        .catch(() => {})
+        .finally(() => setLoadingDocSubmissions(false));
+    } else if (activeTab === 'members') {
+      setLoadingRemoteMembers(true);
+      fetchMemberProfilesForAdmin()
+        .then((list) => setRemoteMembers(list))
+        .catch(() => {})
+        .finally(() => setLoadingRemoteMembers(false));
+    }
+  }, [isOpen, isAdmin, isPreviewSession, activeTab]);
+
+  const handleBackupStudentsJson = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      source: 'siteData/privateStudents',
+      totalStudents: draft.students.length,
+      students: draft.students,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `backup-hoc-sinh-th-le-loi-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setMigrationReportMsg({
+      type: 'success',
+      text: `Đã tải tệp sao lưu JSON gồm ${draft.students.length} hồ sơ học sinh về máy tính.`,
+    });
+  };
+
+  const handleSyncToStudentResults = async () => {
+    if (migratingResults) return;
+    if (privateStudentsLoading || privateStudentsError) {
+      setMigrationReportMsg({
+        type: 'error',
+        text: 'Chưa tải xong dữ liệu gốc từ siteData/privateStudents. Vui lòng bấm "Tải Lại Firebase" trước khi sao chép sang studentResults.',
+      });
+      return;
+    }
+    if (draft.students.length === 0) {
+      setMigrationReportMsg({
+        type: 'error',
+        text: 'Danh sách học sinh hiện đang trống. Không thể sao chép sang studentResults.',
+      });
+      return;
+    }
+    const dedupedDraft = deduplicateStudents(draft.students);
+    const dedupedBaseline = studentBaseline !== null ? deduplicateStudents(studentBaseline) : null;
+    if (
+      dedupedBaseline !== null &&
+      JSON.stringify(dedupedDraft) !== JSON.stringify(dedupedBaseline)
+    ) {
+      setMigrationReportMsg({
+        type: 'error',
+        text: 'Bạn có thay đổi danh sách học sinh chưa lưu. Vui lòng bấm "Lưu Lên Firebase" để lưu vào dữ liệu gốc siteData/privateStudents trước khi sao chép sang studentResults.',
+      });
+      return;
+    }
+    setMigratingResults(true);
+    setMigrationReportMsg(null);
+    try {
+      const report = await migratePrivateStudentsToStudentResults();
+      if (
+        report.failedItems.length > 0 ||
+        report.missingVerifiedIds.length > 0 ||
+        !report.originalIntact
+      ) {
+        setMigrationReportMsg({
+          type: 'error',
+          text: `Sao chép chưa hoàn tất: đã ghi ${report.syncedCount}/${report.totalInput}, đối chiếu khớp ${report.verifiedMatchedCount}/${report.totalInput} bản ghi trên studentResults (${report.failedItems.length} lỗi${report.failedItems[0] ? `: ${report.failedItems[0].studentCode} - ${report.failedItems[0].reason}` : ''}). Dữ liệu gốc siteData/privateStudents hiện có ${report.originalCountAfter} bản ghi.`,
+        });
+      } else {
+        setMigrationReportMsg({
+          type: 'success',
+          text: `✅ Sao chép & đối chiếu thành công ${report.verifiedMatchedCount}/${report.totalInput} học sinh từ siteData/privateStudents sang collection studentResults (tổng studentResults: ${report.verifiedCount} bản ghi, 0 lỗi, 0 trùng lặp). Dữ liệu gốc siteData/privateStudents vẫn còn nguyên vẹn ${report.originalCountAfter}/${report.originalCountBefore} bản ghi.`,
+        });
+      }
+    } catch (err: any) {
+      setMigrationReportMsg({
+        type: 'error',
+        text: err?.message || 'Không thể sao chép sang studentResults.',
+      });
+    } finally {
+      setMigratingResults(false);
+    }
+  };
+
+  const handleSaveParentLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (savingParentLink) return;
+    setParentLinkMsg(null);
+
+    const selectedStudents = draft.students.filter((st) =>
+      selectedStudentIdsForParent.includes(toSafeStudentResultDocId(st))
+    );
+    const studentIds = selectedStudents.map((st) => toSafeStudentResultDocId(st));
+    const studentCodes = selectedStudents.map((st) => st.studentCode);
+
+    setSavingParentLink(true);
+    try {
+      const saved = await saveParentLinkForAdmin({
+        parentUid: parentLinkUidInput,
+        parentEmail: parentLinkEmailInput,
+        parentName: parentLinkNameInput,
+        studentIds,
+        studentCodes,
+      });
+      setParentLinks((prev) => [
+        saved,
+        ...prev.filter((item) => item.parentUid !== saved.parentUid),
+      ]);
+      setParentLinkUidInput('');
+      setParentLinkEmailInput('');
+      setParentLinkNameInput('');
+      setSelectedStudentIdsForParent([]);
+      setParentLinkMsg({
+        type: 'success',
+        text: `Đã lưu liên kết tài khoản phụ huynh ${saved.parentEmail} với ${saved.studentIds.length} học sinh (${saved.studentCodes.join(', ')}).`,
+      });
+    } catch (err: any) {
+      setParentLinkMsg({
+        type: 'error',
+        text: err?.message || 'Không thể lưu liên kết phụ huynh.',
+      });
+    } finally {
+      setSavingParentLink(false);
+    }
+  };
+
+  const handleDeleteParentLink = async (parentUid: string) => {
+    setParentLinkMsg(null);
+    try {
+      await deleteParentLinkForAdmin(parentUid);
+      setParentLinks((prev) => prev.filter((item) => item.parentUid !== parentUid));
+      setParentLinkMsg({
+        type: 'success',
+        text: `Đã hủy liên kết phụ huynh (UID: ${parentUid}).`,
+      });
+    } catch (err: any) {
+      setParentLinkMsg({
+        type: 'error',
+        text: err?.message || 'Không thể hủy liên kết phụ huynh.',
+      });
+    }
+  };
+
+  const handleApproveSubmission = async (sub: DocumentSubmission) => {
+    if (processingSubId) return;
+    const urlCheck = validateDocumentUrl(sub.downloadUrl);
+    if (!urlCheck.valid || !urlCheck.normalizedUrl) {
+      setDocSubMsg({
+        type: 'error',
+        text: `Không thể duyệt "${sub.title}" vì liên kết không hợp lệ: ${urlCheck.error}`,
+      });
+      return;
+    }
+
+    setProcessingSubId(sub.id);
+    setDocSubMsg(null);
+    try {
+      const newDoc: DocumentItem = {
+        id: `doc-${Date.now()}`,
+        title: sub.title,
+        category: sub.category,
+        categoryLabel: sub.categoryLabel,
+        fileSize: sub.fileSize || 'Liên kết trực tuyến',
+        fileType: sub.fileType || 'Link trực tuyến',
+        uploadDate: new Date().toLocaleDateString('vi-VN'),
+        uploaderName: sub.submittedByName,
+        uploaderEmail: sub.submittedByEmail,
+        downloadCount: 0,
+        description: sub.description,
+        downloadUrl: urlCheck.normalizedUrl,
+      };
+
+      const nextDraft: SiteContent = {
+        ...draft,
+        documents: [newDoc, ...draft.documents],
+      };
+
+      await saveOnlineContent(nextDraft);
+      await updateDocumentSubmissionStatusForAdmin(sub.id, 'approved', 'Đã duyệt và xuất bản vào Kho Tài Liệu');
+
+      setDraft(nextDraft);
+      onSaveContent(nextDraft, true);
+      setDocSubmissions((prev) =>
+        prev.map((item) => (item.id === sub.id ? { ...item, status: 'approved' } : item))
+      );
+      setDocSubMsg({
+        type: 'success',
+        text: `✅ Đã duyệt và xuất bản học liệu "${sub.title}" lên Kho Tài Liệu công khai!`,
+      });
+    } catch (err: any) {
+      setDocSubMsg({
+        type: 'error',
+        text: err?.message || 'Không thể duyệt và xuất bản học liệu.',
+      });
+    } finally {
+      setProcessingSubId(null);
+    }
+  };
+
+  const handleRejectSubmission = async (sub: DocumentSubmission) => {
+    if (processingSubId) return;
+    setProcessingSubId(sub.id);
+    setDocSubMsg(null);
+    try {
+      await updateDocumentSubmissionStatusForAdmin(
+        sub.id,
+        'rejected',
+        'Liên kết chưa phù hợp hoặc cần bổ sung mô tả rõ hơn'
+      );
+      setDocSubmissions((prev) =>
+        prev.map((item) => (item.id === sub.id ? { ...item, status: 'rejected' } : item))
+      );
+      setDocSubMsg({
+        type: 'success',
+        text: `Đã từ chối đề xuất học liệu "${sub.title}".`,
+      });
+    } catch (err: any) {
+      setDocSubMsg({
+        type: 'error',
+        text: err?.message || 'Không thể cập nhật trạng thái từ chối.',
+      });
+    } finally {
+      setProcessingSubId(null);
+    }
+  };
+
+  const handleDeleteSubmission = async (subId: string) => {
+    if (processingSubId) return;
+    setProcessingSubId(subId);
+    setDocSubMsg(null);
+    try {
+      await deleteDocumentSubmissionForAdmin(subId);
+      setDocSubmissions((prev) => prev.filter((item) => item.id !== subId));
+    } catch (err: any) {
+      setDocSubMsg({
+        type: 'error',
+        text: err?.message || 'Không thể xóa đề xuất học liệu.',
+      });
+    } finally {
+      setProcessingSubId(null);
+    }
+  };
+
   if (!isOpen) return null;
 
   const handleStudentFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -341,23 +707,44 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   const handleConfirmStudentImport = () => {
     if (!importPreview) return;
+    if (!isPreviewSession && (privateStudentsLoading || Boolean(privateStudentsError))) {
+      setImportError(
+        'Chưa tải được danh sách học sinh gốc từ Firebase. Vui lòng bấm "Tải Lại Firebase" trước khi nhập Excel để tránh ghi đè mất dữ liệu hiện có.'
+      );
+      return;
+    }
+
+    const { merged, addedCount, updatedCount } = mergeStudentLists(
+      draft.students,
+      importPreview.students,
+      importMode
+    );
+
+    if (merged.length === 0) {
+      setImportError('Danh sách học sinh từ file Excel không có bản ghi hợp lệ.');
+      return;
+    }
+
+    setDraft({ ...draft, students: merged });
 
     if (importMode === 'replace') {
-      setDraft({ ...draft, students: importPreview.students });
       setStatusMsg({
         type: 'success',
-        text: `Đã thay thế toàn bộ danh sách bằng ${importPreview.students.length} học sinh từ file Excel! Nhớ bấm "Lưu Thay Đổi" để áp dụng.`,
+        text: `Đã thay thế danh sách tạm bằng ${merged.length} học sinh hợp lệ từ file Excel (đã tự động lọc trùng). Nhớ bấm "Lưu Lên Firebase" để xác nhận lưu chính thức!`,
       });
     } else {
-      setDraft({ ...draft, students: [...importPreview.students, ...draft.students] });
+      const detailParts: string[] = [];
+      if (addedCount > 0) detailParts.push(`thêm mới ${addedCount} em`);
+      if (updatedCount > 0) detailParts.push(`cập nhật ${updatedCount} em đã có (không tạo trùng)`);
+      const detailText = detailParts.length > 0 ? detailParts.join(', ') : 'không có thay đổi mới';
       setStatusMsg({
         type: 'success',
-        text: `Đã thêm thành công ${importPreview.students.length} học sinh từ file Excel vào danh sách! Nhớ bấm "Lưu Thay Đổi" để áp dụng.`,
+        text: `Đã gộp từ file Excel: ${detailText}. Tổng cộng ${merged.length} học sinh. Nhớ bấm "Lưu Lên Firebase" để xác nhận lưu chính thức!`,
       });
     }
 
     setImportPreview(null);
-    setTimeout(() => setStatusMsg(null), 5000);
+    setTimeout(() => setStatusMsg(null), 6000);
   };
 
   // Authentication logic cleanly separated by environment:
@@ -365,34 +752,55 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   // 2. Google AI Studio: Allows preview mode with mock data for safe UI testing.
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loggingIn) return;
     setLoginError('');
+    setLoggingIn(true);
     try {
-      if (loginMode === 'firebase' || !canUsePreviewAuth) {
+      if (loginMode === 'firebase') {
         const conf = getFirebaseConfig();
         const configured = Boolean(conf.apiKey && conf.projectId);
 
         if (!configured) {
+          setShowFirebaseSettings(true);
           throw new Error(
-            'Website chưa được cấu hình Firebase (VITE_FIREBASE_API_KEY / VITE_FIREBASE_PROJECT_ID). Vui lòng kiểm tra biến môi trường GitHub Actions trước khi đăng nhập.'
+            'Chưa có thông số kết nối Firebase (API Key / Project ID). Quý thầy cô vui lòng mở mục "Cài đặt kết nối Firebase" bên dưới để nhập hoặc kiểm tra biến môi trường.'
           );
         }
 
-        // Thực hiện xác thực an toàn qua Firebase Authentication (KHÔNG FALLBACK)
+        // 1. Xác thực an toàn qua Firebase Authentication (KHÔNG FALLBACK)
         await loginOnline(username, password);
-        // Never interpret a failed private read as an empty or public student list.
-        const privateStudents = await loadPrivateStudents();
-        if (!privateStudents) {
-          throw new Error('Không đọc được hồ sơ học sinh riêng tư từ Firebase. Đã chặn mở phiên chỉnh sửa để bảo vệ dữ liệu.');
-        }
-        const students: StudentRecord[] = privateStudents;
-        setStudentBaseline(structuredClone(students));
-        setDraft({ ...content, students });
+
+        // 2. Đã xác thực quản trị -> Đồng bộ danh sách học sinh riêng tư vào trạng thái chung App.tsx
+        setIsPreviewSession(false);
+        setPassword('');
+        setStatusMsg({
+          type: 'success',
+          text: 'Đã xác thực quản trị Firebase. Đang tải danh sách học sinh riêng tư...',
+        });
+
         // Đồng bộ tức thì tuyển sinh và góp ý từ Cloud Firestore khi vừa đăng nhập
         syncAdmissionsWithFirestore(false).then((list) => setAdmissionsList(list)).catch(() => {});
         syncFeedbackWithFirestore(false).then((list) => setFeedbackList(list)).catch(() => {});
-        setIsPreviewSession(false);
-        onLoginSuccess(false);
-        setPassword('');
+
+        try {
+          const loadedStudents = await onSyncPrivateStudentsAfterLogin(false);
+          setStudentBaseline(structuredClone(loadedStudents));
+          setDraft({ ...structuredClone(content), students: structuredClone(loadedStudents) });
+          setStatusMsg({
+            type: 'success',
+            text:
+              loadedStudents.length > 0
+                ? `Đăng nhập thành công! Đã tải ${loadedStudents.length} hồ sơ học sinh từ Firebase.`
+                : 'Đăng nhập thành công! Hiện chưa có hồ sơ học sinh nào trên Firebase.',
+          });
+        } catch (loadErr: any) {
+          // Không tự động coi danh sách học sinh là rỗng khi Firebase trả lỗi
+          setStudentBaseline(null);
+          setStatusMsg({
+            type: 'error',
+            text: `Đã đăng nhập quản trị nhưng chưa tải được danh sách học sinh từ Firebase: ${loadErr?.message || 'Lỗi kết nối'}. Dữ liệu trên Firebase vẫn được giữ nguyên.`,
+          });
+        }
         return;
       } else {
         // CỔNG XEM TRƯỚC GOOGLE AI STUDIO (BẢO VỆ PRODUCTION TUYỆT ĐỐI)
@@ -405,22 +813,24 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         const isPwValid = (await verifyAdminPassword(password)) || (await verifyAdminPassword(username));
         if (!isPwValid) {
           throw new Error(
-            'Thông tin mở khóa xem trước không chính xác.'
+            'Mật khẩu xem trước không chính xác. Mật khẩu mặc định xem trước: Leloi@PongDrang2026# (hoặc bgh_leloi).'
           );
         }
 
         // TÁCH BIỆT DỮ LIỆU: Sử dụng dữ liệu giả lập riêng biệt, tuyệt đối bảo vệ học sinh & phụ huynh thật
-        setDraft({ ...content, students: MOCK_PREVIEW_STUDENTS });
-        setStudentBaseline(null);
+        const previewStudents = await onSyncPrivateStudentsAfterLogin(true);
+        setDraft({ ...content, students: structuredClone(previewStudents) });
+        setStudentBaseline(structuredClone(previewStudents));
         setAdmissionsList(MOCK_PREVIEW_ADMISSIONS);
         setFeedbackList(MOCK_PREVIEW_FEEDBACK);
         setIsPreviewSession(true);
-        onLoginSuccess(true);
         setPassword('');
       }
     } catch (error: any) {
       logoutOnline();
       setLoginError(error.message || 'Đăng nhập quản trị thất bại.');
+    } finally {
+      setLoggingIn(false);
     }
   };
 
@@ -452,7 +862,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setPwMsg('Đã cập nhật mật khẩu quản trị mới thành công! Mật khẩu mới có hiệu lực ngay lập tức.');
   };
 
-  // Save changes to Firebase (if online session active) or local storage
+  // Save changes to Firebase (if online session active) or memory preview
   const handleSaveDraft = async () => {
     if (savingOnline) return;
     setSavingOnline(true);
@@ -460,6 +870,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     try {
       if (isPreviewSession) {
         // Chế độ Xem trước AI Studio: Chỉ lưu bản nháp vào bộ nhớ trình duyệt, KHÔNG ghi lên Cloud Firestore Production
+        if (draft.students.length > 0) {
+          await onSavePrivateStudents(draft.students);
+        }
         onSaveContent(draft, false);
         setStatusMsg({
           type: 'success',
@@ -469,31 +882,81 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       }
 
       if (isFirebaseConfigured() && isOnlineAuthenticated()) {
-        if (studentBaseline === null) {
-          throw new Error('Chưa xác minh được dữ liệu học sinh riêng tư. Đã chặn lưu để tránh ghi đè dữ liệu.');
-        }
-        const changedStudents = studentBaseline !== null && JSON.stringify(draft.students) !== JSON.stringify(studentBaseline);
+        const dedupedDraftStudents = deduplicateStudents(draft.students);
+        const baselineComparison = studentBaseline !== null ? deduplicateStudents(studentBaseline) : null;
+        const changedStudents =
+          (baselineComparison !== null &&
+            JSON.stringify(dedupedDraftStudents) !== JSON.stringify(baselineComparison)) ||
+          (baselineComparison === null && !privateStudentsError && dedupedDraftStudents.length > 0);
+
+        let savedStudentsCount: number | null = null;
+
         if (changedStudents) {
-          if (draft.students.length === 0) throw new Error('Không được lưu danh sách học sinh rỗng. Hãy nhập danh sách hợp lệ trước.');
-          if (!window.confirm(`Bạn sắp cập nhật riêng ${draft.students.length} hồ sơ học sinh lên khu vực BẢO MẬT Firebase. Tiếp tục?`)) return;
-          await savePrivateStudents(draft.students);
-          setStudentBaseline(structuredClone(draft.students));
+          if (dedupedDraftStudents.length === 0) {
+            throw new Error(
+              'Không được lưu danh sách học sinh rỗng. Hãy nhập danh sách hợp lệ trước khi lưu.'
+            );
+          }
+          if (
+            !window.confirm(
+              `Bạn sắp lưu riêng ${dedupedDraftStudents.length} hồ sơ học sinh lên khu vực BẢO MẬT Firebase và đối chiếu lại sau khi lưu. Tiếp tục?`
+            )
+          ) {
+            return;
+          }
+          const verifiedStudents = await onSavePrivateStudents(dedupedDraftStudents);
+          setStudentBaseline(structuredClone(verifiedStudents));
+          setDraft((prev) => ({ ...prev, students: structuredClone(verifiedStudents) }));
+          savedStudentsCount = verifiedStudents.length;
         }
+
         await saveOnlineContent(draft);
         onSaveContent(draft, true);
-        setStatusMsg({ type: 'success', text: 'Đã lưu lên Firebase thành công. Mọi người sẽ nhìn thấy nội dung mới sau khi tải lại trang.' });
+        setStatusMsg({
+          type: 'success',
+          text:
+            savedStudentsCount !== null
+              ? `Đã lưu và đối chiếu thành công ${savedStudentsCount} hồ sơ học sinh cùng nội dung website lên Firebase.`
+              : 'Đã lưu nội dung công khai lên Firebase thành công. Dữ liệu học sinh riêng tư vẫn được giữ nguyên an toàn.',
+        });
       } else {
         throw new Error('Chưa đăng nhập Firebase Authentication. Không thể lưu dữ liệu lên hệ thống Production.');
       }
     } catch (error: any) {
       setStatusMsg({ type: 'error', text: `Lỗi khi lưu dữ liệu: ${error.message || 'Lỗi kết nối.'}. Nội dung vẫn còn trong cửa sổ chỉnh sửa.` });
-    } finally { setSavingOnline(false); }
+    } finally {
+      setSavingOnline(false);
+    }
   };
 
+  // Public-only JSON backup. Never export private student records or authentication tokens.
   // Public-only JSON backup. Never export private student records or authentication tokens.
   const downloadPublicBackup = async () => {
     setBackupNotice('');
     try {
+      if (isPreviewSession || isTrustedPreviewEnvironment()) {
+        // Chế độ xem trước AI Studio: Xuất bản sao lưu dữ liệu mẫu trong bộ nhớ, tuyệt đối không truy cập Firebase Production
+        const { students: _excluded, ...safe } = draft;
+        const fileContent = JSON.stringify({
+          format: 'th-le-loi-public-backup',
+          version: 1,
+          previewMode: true,
+          exportedAt: new Date().toISOString(),
+          content: safe,
+        }, null, 2);
+        const blob = new Blob([fileContent], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `th-le-loi-xem-truoc-noi-dung-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+        setBackupNotice('Đã tạo bản sao lưu dữ liệu xem trước (trong bộ nhớ). Thao tác hoàn toàn không truy cập Firebase Production.');
+        return;
+      }
+
       const remote = await loadOnlineContent();
       if (!remote || !remote.schoolInfo || !Array.isArray(remote.teachers)) {
         throw new Error('Chưa đọc được nội dung công khai từ Firebase.');
@@ -528,9 +991,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     try {
       if (file.size > 950000) throw new Error('File sao lưu quá lớn (giới hạn 950 KB).');
       const data = JSON.parse(await file.text());
-      if (data?.format !== 'th-le-loi-public-backup' || data?.version !== 1 || !data.content ||
-          data.projectId !== import.meta.env.VITE_FIREBASE_PROJECT_ID) {
-        throw new Error('Không đúng định dạng sao lưu hoặc không thuộc dự án Firebase của trường.');
+      if (data?.format !== 'th-le-loi-public-backup' || data?.version !== 1 || !data.content) {
+        throw new Error('Không đúng định dạng sao lưu nội dung trường.');
       }
       const restored = data.content as Partial<SiteContent>;
       if (!restored.schoolInfo || typeof restored.schoolInfo.name !== 'string' ||
@@ -541,6 +1003,20 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       if (Object.prototype.hasOwnProperty.call(restored, 'students')) {
         throw new Error('File chứa dữ liệu học sinh. Chỉ được khôi phục bản sao lưu nội dung công khai.');
       }
+
+      // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Tuyệt đối không ghi lên Cloud Firestore Production
+      if (isPreviewSession || isTrustedPreviewEnvironment()) {
+        const updated = { ...draft, ...restored, students: draft.students } as SiteContent;
+        setDraft(updated);
+        onSaveContent(updated, false);
+        setBackupNotice('Đã khôi phục nội dung xem trước vào bộ nhớ tạm (Google AI Studio). Tuyệt đối không ghi lên Firebase Production.');
+        return;
+      }
+
+      if (data.projectId && data.projectId !== import.meta.env.VITE_FIREBASE_PROJECT_ID) {
+        throw new Error('File sao lưu không thuộc dự án Firebase của trường.');
+      }
+
       const remote = await loadOnlineContent();
       if (!remote) throw new Error('Không tải được bản nội dung hiện tại từ Firebase.');
       if (!window.confirm(`KHÔI PHỤC NỘI DUNG CÔNG KHAI\n\nFile: ${file.name}\nNgày sao lưu: ${data.exportedAt || 'không rõ'}\n\nThao tác sẽ thay thế nội dung công khai trên Firebase cho TẤT CẢ NGƯỜI XEM. Hồ sơ học sinh riêng tư sẽ không bị thay đổi.\n\nBạn đã tải bản sao lưu hiện tại trước khi tiếp tục chưa?`)) return;
@@ -719,7 +1195,22 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             {/* Login Mode Selector: Only displayed in trusted preview environment (AI Studio).
                 On Production (GitHub Pages), ONLY Firebase Authentication is active with NO tabs. */}
             {canUsePreviewAuth ? (
-              <div className="p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginMode('firebase');
+                    setLoginError('');
+                  }}
+                  className={`py-2 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    loginMode === 'firebase'
+                      ? 'bg-white text-amber-900 shadow-xs border border-amber-200/80 font-black'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Flame className={`w-4 h-4 ${loginMode === 'firebase' ? 'text-amber-600' : 'text-slate-400'}`} />
+                  <span>Firebase Authentication</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -755,12 +1246,28 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
             {/* Mode descriptions when in Preview environment */}
             {canUsePreviewAuth && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900">
-                <p className="font-bold">Xem trước giao diện (dữ liệu mẫu)</p>
-                <p>Chế độ này không đăng nhập Firebase và không truy cập dữ liệu thật.</p>
-              </div>
+              loginMode === 'firebase' ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-1">
+                  <p className="font-bold flex items-center text-amber-950">
+                    <AlertTriangle className="w-4 h-4 mr-1 text-amber-700 shrink-0" />
+                    Chế độ Kết nối Trực tuyến:
+                  </p>
+                  <p className="text-amber-800 text-[11px]">
+                    Đăng nhập bằng email và mật khẩu Firebase Authentication. Firestore Rules kiểm tra quyền quản trị trên máy chủ.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 space-y-1">
+                  <p className="font-bold flex items-center text-emerald-950">
+                    <ShieldCheck className="w-4 h-4 mr-1 text-emerald-700 shrink-0" />
+                    Cổng Xem Trước Giao Diện (Google AI Studio):
+                  </p>
+                  <p className="text-emerald-800 text-[11px]">
+                    Đăng nhập nội bộ xem trước bằng mật khẩu trường học. Chế độ này sử dụng dữ liệu mẫu riêng biệt, hoàn toàn không kết nối hoặc ghi đè Cloud Firestore Production. Mật khẩu mẫu: <code className="bg-emerald-100 font-mono font-bold px-1 py-0.5 rounded text-emerald-900">Leloi@PongDrang2026#</code> (hoặc <code className="bg-emerald-100 font-mono font-bold px-1 py-0.5 rounded text-emerald-900">bgh_leloi</code>).
+                  </p>
+                </div>
+              )
             )}
-
 
             {loginError && (
               <div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-lg font-medium leading-relaxed">
@@ -808,7 +1315,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 />
               </div>
 
-              {loginMode === 'firebase' && canUsePreviewAuth && (
+              {loginMode === 'firebase' && (
                 <div className="pt-0.5">
                   <button
                     type="button"
@@ -867,13 +1374,20 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            saveFirebaseConfig({
-                              apiKey: fbApiKeyInput,
-                              projectId: fbProjectIdInput,
-                              adminEmail: username,
-                            });
-                            setFbSaveMsg('Đã lưu cấu hình Firebase vào trình duyệt thành công!');
-                            setTimeout(() => setFbSaveMsg(''), 4000);
+                            try {
+                              saveFirebaseConfig({
+                                apiKey: fbApiKeyInput,
+                                projectId: fbProjectIdInput,
+                                adminEmail: username,
+                              });
+                              setFbSaveMsg('Đã lưu cấu hình Firebase vào trình duyệt thành công!');
+                            } catch (err: any) {
+                              setFbSaveMsg(
+                                err?.message ||
+                                  'Cấu hình Firebase trên website Production được quản lý cố định qua biến môi trường GitHub.'
+                              );
+                            }
+                            setTimeout(() => setFbSaveMsg(''), 5000);
                           }}
                           className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold text-xs cursor-pointer"
                         >
@@ -890,6 +1404,23 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       </p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {loginMode === 'school_master' && canUsePreviewAuth && (
+                <div className="pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUsername('bgh_leloi');
+                      setPassword('Leloi@PongDrang2026#');
+                      setLoginError('');
+                    }}
+                    className="w-full py-2 px-3 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Điền nhanh mật khẩu xem trước mẫu (Google AI Studio)</span>
+                  </button>
                 </div>
               )}
 
@@ -915,7 +1446,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       </>
                     ) : (
                       <>
-                        Chế độ xem trước chỉ dùng tài khoản thử nghiệm; không nhập mật khẩu Firebase thật.
+                        Mật khẩu xem trước mẫu ban đầu trong Google AI Studio là: <code className="bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded font-mono font-bold">Leloi@PongDrang2026#</code> (hoặc <code className="bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded font-mono font-bold">bgh_leloi</code>).
                       </>
                     )}
                   </p>
@@ -924,13 +1455,19 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
               <button
                 type="submit"
-                className={`w-full font-bold py-2.5 rounded-xl text-sm transition-all shadow-md hover:shadow-lg flex items-center justify-center space-x-2 cursor-pointer ${
+                disabled={loggingIn}
+                className={`w-full font-bold py-2.5 rounded-xl text-sm transition-all shadow-md hover:shadow-lg flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
                   loginMode === 'firebase' || !canUsePreviewAuth
                     ? 'bg-amber-600 hover:bg-amber-700 text-white'
                     : 'bg-emerald-700 hover:bg-emerald-800 text-white'
                 }`}
               >
-                {loginMode === 'firebase' || !canUsePreviewAuth ? (
+                {loggingIn ? (
+                  <>
+                    <RefreshCcw className="w-4 h-4 animate-spin" />
+                    <span>Đang xác thực &amp; tải dữ liệu từ Firebase...</span>
+                  </>
+                ) : loginMode === 'firebase' || !canUsePreviewAuth ? (
                   <>
                     <Flame className="w-4 h-4 text-amber-200" />
                     <span>Đăng Nhập Firebase Authentication</span>
@@ -1210,8 +1747,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           id: 'teacher-' + Date.now(),
                           name: 'Giáo viên mới',
                           role: 'Giáo viên bộ môn',
-                          subjectOrGrade: 'Khối lớp',
-                          campus: 'Trường chính',
+                          subjectOrGrade: 'Khối 1 - Giáo viên bộ môn',
+                          campus: 'Khối 1',
                           qualification: 'Cử nhân Sư phạm',
                           bio: 'Tận tâm với nghề giáo dục tiểu học tại Đắk Lắk.',
                           avatar:
@@ -1316,7 +1853,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             </button>
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
                           <input
                             type="text"
                             value={t.role}
@@ -1336,9 +1873,26 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               updated[idx].subjectOrGrade = e.target.value;
                               setDraft({ ...draft, teachers: updated });
                             }}
-                            placeholder="Môn dạy / Khối"
+                            placeholder="Môn dạy / Khối (VD: Khối 1 - Lớp 1A)"
                             className="border rounded p-1.5"
                           />
+                          <select
+                            value={t.campus || 'Khối 1'}
+                            onChange={(e) => {
+                              const updated = [...draft.teachers];
+                              updated[idx].campus = e.target.value;
+                              setDraft({ ...draft, teachers: updated });
+                            }}
+                            className="border rounded p-1.5 bg-white font-medium text-emerald-800"
+                          >
+                            <option value="Khối 1">Khối 1</option>
+                            <option value="Khối 2">Khối 2</option>
+                            <option value="Khối 3">Khối 3</option>
+                            <option value="Khối 4">Khối 4</option>
+                            <option value="Khối 5">Khối 5</option>
+                            <option value="Khối 3, 4, 5">Khối 3, 4, 5</option>
+                            <option value="Toàn trường">Toàn trường</option>
+                          </select>
                         </div>
                         <textarea
                           rows={2}
@@ -1360,10 +1914,18 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               {/* TAB 3: NEWS */}
               {activeTab === 'news' && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b pb-2">
-                    <h3 className="text-base font-bold text-slate-900">
-                      Quản Lý Tin Tức & Thông Báo
-                    </h3>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b pb-2 gap-2">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">
+                        Quản Lý Tin Tức & Thông Báo
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Đang ghim:{' '}
+                        <strong className="text-amber-800">
+                          {draft.news.filter((n) => n.isFeatured).length} bài nổi bật lên Trang Chủ
+                        </strong>
+                      </p>
+                    </div>
                     <button
                       onClick={() => {
                         const newN: NewsItem = {
@@ -1381,7 +1943,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         };
                         setDraft({ ...draft, news: [newN, ...draft.news] });
                       }}
-                      className="inline-flex items-center bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-emerald-800"
+                      className="inline-flex items-center bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-emerald-800 self-start sm:self-auto"
                     >
                       <Plus className="w-3.5 h-3.5 mr-1" />
                       Viết Tin Mới
@@ -1392,9 +1954,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     {draft.news.map((item, idx) => (
                       <div
                         key={item.id}
-                        className="border border-slate-200 rounded-xl p-3 bg-white space-y-2"
+                        className={`border rounded-xl p-3 bg-white space-y-2 transition-all ${
+                          item.isFeatured
+                            ? 'border-amber-400 bg-amber-50/20'
+                            : 'border-slate-200'
+                        }`}
                       >
-                        <div className="flex justify-between items-start">
+                        <div className="flex justify-between items-start gap-2">
                           <input
                             type="text"
                             value={item.title}
@@ -1403,7 +1969,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               updated[idx].title = e.target.value;
                               setDraft({ ...draft, news: updated });
                             }}
-                            className="font-bold text-sm text-slate-900 border rounded px-2 py-1 w-3/4"
+                            className="font-bold text-sm text-slate-900 border rounded px-2 py-1 w-full"
                           />
                           <button
                             type="button"
@@ -1411,7 +1977,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               const updated = draft.news.filter((_, i) => i !== idx);
                               setDraft({ ...draft, news: updated });
                             }}
-                            className="text-red-500 hover:text-red-700 p-1"
+                            className="text-red-500 hover:text-red-700 p-1 shrink-0"
+                            title="Xóa bài này"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -1426,6 +1993,112 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           }}
                           className="w-full border rounded p-1.5 text-xs text-slate-700"
                         />
+
+                        {/* External link settings if applicable */}
+                        <div className="bg-sky-50/70 border border-sky-200/80 rounded-lg p-2.5 space-y-1.5 text-xs">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center space-x-1.5 font-bold text-sky-950 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(item.isExternalLink || item.externalUrl)}
+                                onChange={(e) => {
+                                  const updated = [...draft.news];
+                                  const checked = e.target.checked;
+                                  updated[idx].isExternalLink = checked;
+                                  if (!checked) {
+                                    updated[idx].externalUrl = undefined;
+                                    updated[idx].sourceName = undefined;
+                                  } else {
+                                    if (!updated[idx].sourceName) updated[idx].sourceName = 'Báo Đắk Lắk';
+                                  }
+                                  setDraft({ ...draft, news: updated });
+                                }}
+                                className="rounded text-sky-600 focus:ring-sky-500"
+                              />
+                              <span>Chia sẻ link bài báo / bài viết từ Internet</span>
+                            </label>
+                            {item.externalUrl && (
+                              <a
+                                href={item.externalUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sky-700 hover:text-sky-900 font-bold text-[11px] underline flex items-center gap-1"
+                              >
+                                Xem bài gốc ↗
+                              </a>
+                            )}
+                          </div>
+                          {(item.isExternalLink || item.externalUrl) && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                              <div>
+                                <label className="block text-[10px] font-bold text-sky-950 mb-0.5">
+                                  Link URL bài báo / Internet:
+                                </label>
+                                <input
+                                  type="text"
+                                  placeholder="https://baodaklak.vn/..."
+                                  value={item.externalUrl || ''}
+                                  onChange={(e) => {
+                                    const updated = [...draft.news];
+                                    let val = e.target.value;
+                                    updated[idx].externalUrl = val;
+                                    updated[idx].isExternalLink = Boolean(val.trim());
+                                    setDraft({ ...draft, news: updated });
+                                  }}
+                                  className="w-full border border-sky-300 rounded px-2 py-1 text-xs bg-white text-slate-900"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-sky-950 mb-0.5">
+                                  Tên nguồn báo:
+                                </label>
+                                <input
+                                  type="text"
+                                  placeholder="Báo Đắk Lắk, GD&TĐ..."
+                                  value={item.sourceName || ''}
+                                  onChange={(e) => {
+                                    const updated = [...draft.news];
+                                    updated[idx].sourceName = e.target.value;
+                                    setDraft({ ...draft, news: updated });
+                                  }}
+                                  className="w-full border border-sky-300 rounded px-2 py-1 text-xs bg-white text-slate-900"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = [...draft.news];
+                              updated[idx].isFeatured = !updated[idx].isFeatured;
+                              setDraft({ ...draft, news: updated });
+                            }}
+                            className={`inline-flex items-center text-xs font-bold px-3 py-1 rounded-lg transition-all ${
+                              item.isFeatured
+                                ? 'bg-amber-500 text-slate-950 border border-amber-600 shadow-2xs hover:bg-amber-600'
+                                : 'bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200'
+                            }`}
+                          >
+                            <Star
+                              className={`w-3.5 h-3.5 mr-1.5 ${
+                                item.isFeatured
+                                  ? 'fill-slate-950 text-slate-950'
+                                  : 'text-slate-400'
+                              }`}
+                            />
+                            <span>
+                              {item.isFeatured
+                                ? '★ Đang Ghim Nổi Bật Trang Chủ'
+                                : '☆ Ghim Lên Trang Chủ'}
+                            </span>
+                          </button>
+                          <span className="text-[11px] text-slate-500 font-medium">
+                            {item.date || 'Hôm nay'} • {item.categoryLabel || 'Tin Tức'}
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1441,10 +2114,46 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         Quản Lý Học Sinh & Dữ Liệu Tra Cứu
                       </h3>
                       <p className="text-xs text-slate-500">
-                        Chỉ lưu trữ kết quả rèn luyện công khai an toàn (không CCCD, không ngày sinh đầy đủ). Hiện có: <strong className="text-emerald-800">{draft.students.length} học sinh</strong>.
+                        Dữ liệu học sinh riêng tư được bảo vệ trên Firebase (chỉ quản trị viên xem được).{' '}
+                        {privateStudentsLoading ? (
+                          <strong className="text-amber-700">Đang tải từ Firebase...</strong>
+                        ) : privateStudentsError ? (
+                          <strong className="text-red-700">Chưa tải được dữ liệu từ Firebase</strong>
+                        ) : (
+                          <>
+                            Hiện có: <strong className="text-emerald-800">{draft.students.length} học sinh</strong>.
+                          </>
+                        )}
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
+                      {!isPreviewSession && (
+                        <button
+                          type="button"
+                          disabled={privateStudentsLoading}
+                          onClick={async () => {
+                            try {
+                              const reloaded = await onReloadPrivateStudents();
+                              setStudentBaseline(structuredClone(reloaded));
+                              setDraft((prev) => ({ ...prev, students: structuredClone(reloaded) }));
+                              setStatusMsg({
+                                type: 'success',
+                                text: `Đã tải lại ${reloaded.length} hồ sơ học sinh mới nhất từ Firebase.`,
+                              });
+                            } catch (err: any) {
+                              setStatusMsg({
+                                type: 'error',
+                                text: `Không thể tải lại danh sách học sinh: ${err?.message || 'Lỗi kết nối Firebase.'}`,
+                              });
+                            }
+                          }}
+                          className="inline-flex items-center bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 text-xs font-bold px-2.5 py-1.5 rounded-lg shadow-2xs transition-colors disabled:opacity-60 cursor-pointer"
+                          title="Đọc lại danh sách học sinh mới nhất từ Firebase"
+                        >
+                          <RefreshCcw className={`w-3.5 h-3.5 mr-1 text-emerald-700 ${privateStudentsLoading ? 'animate-spin' : ''}`} />
+                          Tải Lại Firebase
+                        </button>
+                      )}
                       {/* 1. Download Template */}
                       <button
                         type="button"
@@ -1505,6 +2214,32 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     </div>
                   </div>
 
+                  {/* Loading / Error Banner for Firebase Private Students */}
+                  {privateStudentsLoading && (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs p-3 rounded-xl flex items-center space-x-2 font-medium">
+                      <RefreshCcw className="w-4 h-4 animate-spin text-amber-700 shrink-0" />
+                      <span>Đang tải danh sách học sinh riêng tư từ Firebase...</span>
+                    </div>
+                  )}
+
+                  {privateStudentsError && !privateStudentsLoading && (
+                    <div className="bg-red-50 border border-red-200 text-red-900 text-xs p-3.5 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <p className="font-bold">⚠️ Không thể tải danh sách học sinh từ Firebase</p>
+                        <p className="text-red-800 mt-0.5">{privateStudentsError} (Hệ thống không tự coi danh sách là rỗng và sẽ không ghi đè dữ liệu hiện có.)</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void onReloadPrivateStudents().catch(() => {});
+                        }}
+                        className="shrink-0 px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg font-bold text-xs cursor-pointer"
+                      >
+                        Thử tải lại
+                      </button>
+                    </div>
+                  )}
+
                   {/* Upload Error Banner */}
                   {importError && (
                     <div className="bg-red-50 border border-red-200 text-red-800 text-xs p-3 rounded-xl flex items-center justify-between">
@@ -1561,10 +2296,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           />
                           <div>
                             <span className="font-bold text-slate-900 block">
-                              ➕ Thêm tiếp vào danh sách hiện tại (Khuyên dùng)
+                              ➕ Gộp thêm vào danh sách hiện tại (Khuyên dùng - Không trùng lặp)
                             </span>
                             <span className="text-slate-600 leading-relaxed block mt-0.5">
-                              Giữ nguyên {draft.students.length} học sinh đang có, thêm tiếp {importPreview.students.length} học sinh từ file. Tổng cộng sẽ có <strong>{draft.students.length + importPreview.students.length}</strong> học sinh.
+                              Giữ nguyên {draft.students.length} học sinh đang có, tự động cập nhật hồ sơ trùng mã và chỉ thêm em mới (tổng sau gộp: <strong>{mergeStudentLists(draft.students, importPreview.students, 'append').merged.length}</strong> học sinh).
                             </span>
                           </div>
                         </label>
@@ -1780,6 +2515,264 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       </tbody>
                     </table>
                   </div>
+
+                  {/* A. Safe Backup & Migration to studentResults/{studentId} */}
+                  {!isPreviewSession && (
+                    <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-black text-emerald-950 flex items-center gap-1.5">
+                            <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                            <span>Sao Lưu &amp; Đồng Bộ Cho Cổng Phụ Huynh (studentResults)</span>
+                          </h4>
+                          <p className="text-[11px] text-emerald-800 mt-0.5 leading-relaxed">
+                            Sao chép an toàn {draft.students.length} hồ sơ học sinh sang collection <code className="bg-white px-1 rounded">studentResults/{'{studentId}'}</code> (ID chuẩn theo Mã HS, không trùng lặp) để phụ huynh chỉ đọc đúng kết quả con em mình. Tuyệt đối không xóa hay ghi đè dữ liệu gốc <code className="bg-white px-1 rounded">siteData/privateStudents</code>.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={handleBackupStudentsJson}
+                            className="inline-flex items-center bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300 font-bold px-3 py-1.5 rounded-lg text-xs cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5 mr-1 text-emerald-700" />
+                            <span>Sao Lưu JSON ({draft.students.length} em)</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={migratingResults || draft.students.length === 0}
+                            onClick={handleSyncToStudentResults}
+                            className="inline-flex items-center bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-3.5 py-1.5 rounded-lg text-xs shadow-xs disabled:opacity-60 cursor-pointer"
+                          >
+                            <RefreshCcw className={`w-3.5 h-3.5 mr-1.5 ${migratingResults ? 'animate-spin' : ''}`} />
+                            <span>
+                              {migratingResults
+                                ? 'Đang đồng bộ sang studentResults...'
+                                : `Đồng Bộ ${draft.students.length} HS Sang studentResults`}
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {migrationReportMsg && (
+                        <div
+                          className={`text-xs p-2.5 rounded-xl border font-semibold ${
+                            migrationReportMsg.type === 'success'
+                              ? 'bg-white border-emerald-300 text-emerald-900'
+                              : 'bg-red-50 border-red-200 text-red-800'
+                          }`}
+                        >
+                          {migrationReportMsg.text}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* B. Parent Account Linking Panel (parentLinks/{parentUid}) */}
+                  {!isPreviewSession && (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                        <div>
+                          <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                            <UserCheck className="w-4 h-4 text-emerald-700" />
+                            <span>Liên Kết Tài Khoản Phụ Huynh – Học Sinh (parentLinks)</span>
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Nhập UID và Email của tài khoản phụ huynh (tạo tại Firebase Console → Authentication → Users) rồi chọn 1 hoặc nhiều học sinh là con em của phụ huynh đó.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={loadingParentLinks}
+                          onClick={() => {
+                            setLoadingParentLinks(true);
+                            fetchParentLinksForAdmin()
+                              .then((list) => setParentLinks(list))
+                              .catch((err: any) =>
+                                setParentLinkMsg({
+                                  type: 'error',
+                                  text: err?.message || 'Không tải được danh sách liên kết.',
+                                })
+                              )
+                              .finally(() => setLoadingParentLinks(false));
+                          }}
+                          className="inline-flex items-center bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-2.5 py-1.5 rounded-lg text-xs cursor-pointer self-start sm:self-auto"
+                        >
+                          <RefreshCcw className={`w-3.5 h-3.5 mr-1 ${loadingParentLinks ? 'animate-spin' : ''}`} />
+                          <span>Tải Lại ({parentLinks.length})</span>
+                        </button>
+                      </div>
+
+                      {parentLinkMsg && (
+                        <div
+                          className={`text-xs p-2.5 rounded-xl border font-semibold ${
+                            parentLinkMsg.type === 'success'
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                              : 'bg-red-50 border-red-200 text-red-800'
+                          }`}
+                        >
+                          {parentLinkMsg.text}
+                        </div>
+                      )}
+
+                      <form onSubmit={handleSaveParentLink} className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              UID Tài khoản Phụ huynh *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={parentLinkUidInput}
+                              onChange={(e) => setParentLinkUidInput(e.target.value)}
+                              placeholder="Dán User UID từ Firebase Auth"
+                              className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              Email Phụ huynh *
+                            </label>
+                            <input
+                              type="email"
+                              required
+                              value={parentLinkEmailInput}
+                              onChange={(e) => setParentLinkEmailInput(e.target.value)}
+                              placeholder="phuhuynh@gmail.com"
+                              className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              Tên Phụ huynh (tùy chọn)
+                            </label>
+                            <input
+                              type="text"
+                              value={parentLinkNameInput}
+                              onChange={(e) => setParentLinkNameInput(e.target.value)}
+                              placeholder="Ví dụ: Phụ huynh em Nguyễn Văn A"
+                              className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-bold text-slate-700">
+                            Chọn học sinh liên kết (có thể chọn nhiều con em): ({selectedStudentIdsForParent.length} đã chọn)
+                          </label>
+                          <div className="max-h-36 overflow-y-auto border border-slate-200 rounded-xl p-2 bg-slate-50 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-xs">
+                            {draft.students.map((st) => {
+                              const sid = toSafeStudentResultDocId(st);
+                              const checked = selectedStudentIdsForParent.includes(sid);
+                              return (
+                                <label
+                                  key={st.id}
+                                  className={`flex items-center space-x-2 p-1.5 rounded-lg border cursor-pointer ${
+                                    checked
+                                      ? 'bg-emerald-50 border-emerald-500 text-emerald-950 font-bold'
+                                      : 'bg-white border-slate-200 text-slate-700'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setSelectedStudentIdsForParent((prev) => [...prev, sid]);
+                                      } else {
+                                        setSelectedStudentIdsForParent((prev) =>
+                                          prev.filter((id) => id !== sid)
+                                        );
+                                      }
+                                    }}
+                                    className="rounded text-emerald-700"
+                                  />
+                                  <span className="truncate">
+                                    <span className="font-mono text-emerald-800">{st.studentCode}</span> – {st.fullName} ({st.className})
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end">
+                          <button
+                            type="submit"
+                            disabled={savingParentLink}
+                            className="inline-flex items-center bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-1.5 rounded-lg text-xs shadow-xs disabled:opacity-60 cursor-pointer"
+                          >
+                            <Save className="w-3.5 h-3.5 mr-1.5" />
+                            <span>{savingParentLink ? 'Đang lưu...' : 'Lưu Liên Kết Phụ Huynh'}</span>
+                          </button>
+                        </div>
+                      </form>
+
+                      {parentLinks.length > 0 && (
+                        <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                          <table className="min-w-full divide-y divide-slate-200 text-xs">
+                            <thead className="bg-slate-50 text-slate-700 font-bold uppercase">
+                              <tr>
+                                <th className="px-3 py-2 text-left">Email &amp; Tên Phụ Huynh</th>
+                                <th className="px-3 py-2 text-left">UID</th>
+                                <th className="px-3 py-2 text-left">Học Sinh Liên Kết</th>
+                                <th className="px-3 py-2 text-right">Thao Tác</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 bg-white">
+                              {parentLinks.map((pl) => (
+                                <tr key={pl.parentUid}>
+                                  <td className="px-3 py-2">
+                                    <div className="font-bold text-slate-900">{pl.parentEmail}</div>
+                                    {pl.parentName && (
+                                      <div className="text-[11px] text-slate-500">{pl.parentName}</div>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2 font-mono text-[11px] text-slate-600">
+                                    {pl.parentUid}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <div className="flex flex-wrap gap-1">
+                                      {(pl.studentCodes.length > 0 ? pl.studentCodes : pl.studentIds).map((code) => (
+                                        <span
+                                          key={code}
+                                          className="font-mono text-[10px] font-bold bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded"
+                                        >
+                                          {code}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2 text-right space-x-2 whitespace-nowrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setParentLinkUidInput(pl.parentUid);
+                                        setParentLinkEmailInput(pl.parentEmail);
+                                        setParentLinkNameInput(pl.parentName || '');
+                                        setSelectedStudentIdsForParent(pl.studentIds);
+                                      }}
+                                      className="text-emerald-700 hover:underline font-bold cursor-pointer"
+                                    >
+                                      Sửa
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteParentLink(pl.parentUid)}
+                                      className="text-red-600 hover:underline font-bold cursor-pointer"
+                                    >
+                                      Gỡ
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1820,6 +2813,150 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       Thêm Tài Liệu Mới
                     </button>
                   </div>
+
+                  {/* Pending Member Document Submissions Moderation Queue */}
+                  {!isPreviewSession && (
+                    <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/80 pb-2.5">
+                        <div>
+                          <h4 className="text-sm font-black text-amber-950 flex items-center gap-1.5">
+                            <Clock className="w-4 h-4 text-amber-700" />
+                            <span>
+                              Học Liệu Thành Viên Gửi Chờ Kiểm Duyệt ({docSubmissions.filter((s) => s.status === 'pending').length} chờ duyệt / {docSubmissions.length} tổng)
+                            </span>
+                          </h4>
+                          <p className="text-[11px] text-amber-900/90 mt-0.5">
+                            Thành viên gửi link học liệu sẽ vào hàng chờ tại đây. Chỉ Quản trị viên mới có quyền duyệt để xuất bản công khai.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={loadingDocSubmissions}
+                          onClick={() => {
+                            setLoadingDocSubmissions(true);
+                            fetchDocumentSubmissionsForAdmin()
+                              .then((list) => setDocSubmissions(list))
+                              .catch((err: any) =>
+                                setDocSubMsg({
+                                  type: 'error',
+                                  text: err?.message || 'Không tải được hàng chờ học liệu.',
+                                })
+                              )
+                              .finally(() => setLoadingDocSubmissions(false));
+                          }}
+                          className="inline-flex items-center bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold px-2.5 py-1.5 rounded-lg text-xs cursor-pointer self-start sm:self-auto"
+                        >
+                          <RefreshCcw className={`w-3.5 h-3.5 mr-1 ${loadingDocSubmissions ? 'animate-spin' : ''}`} />
+                          <span>Tải Lại Hàng Chờ</span>
+                        </button>
+                      </div>
+
+                      {docSubMsg && (
+                        <div
+                          className={`text-xs p-2.5 rounded-xl border font-semibold ${
+                            docSubMsg.type === 'success'
+                              ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                              : 'bg-red-50 border-red-200 text-red-800'
+                          }`}
+                        >
+                          {docSubMsg.text}
+                        </div>
+                      )}
+
+                      {docSubmissions.length === 0 ? (
+                        <p className="text-xs text-amber-900/80 italic">
+                          Chưa có đề xuất học liệu nào từ thành viên.
+                        </p>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {docSubmissions.map((sub) => {
+                            const urlInfo = validateDocumentUrl(sub.downloadUrl);
+                            return (
+                              <div
+                                key={sub.id}
+                                className="bg-white border border-amber-200 rounded-xl p-3 space-y-2 text-xs"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div>
+                                    <span className="font-extrabold text-slate-900">{sub.title}</span>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Gửi bởi: <strong>{sub.submittedByName}</strong> ({sub.submittedByEmail}) • {sub.categoryLabel} • {sub.fileType}
+                                    </div>
+                                  </div>
+                                  <span
+                                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                      sub.status === 'approved'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : sub.status === 'rejected'
+                                        ? 'bg-red-100 text-red-800'
+                                        : 'bg-amber-100 text-amber-900'
+                                    }`}
+                                  >
+                                    {sub.status === 'approved'
+                                      ? 'Đã duyệt'
+                                      : sub.status === 'rejected'
+                                      ? 'Đã từ chối'
+                                      : 'Chờ duyệt'}
+                                  </span>
+                                </div>
+
+                                <p className="text-slate-700">{sub.description}</p>
+
+                                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                                  {urlInfo.valid && urlInfo.normalizedUrl ? (
+                                    <a
+                                      href={urlInfo.normalizedUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-emerald-700 hover:underline font-mono text-[11px] truncate max-w-md"
+                                    >
+                                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                                      <span className="truncate">{urlInfo.normalizedUrl}</span>
+                                    </a>
+                                  ) : (
+                                    <span className="text-red-600 font-bold text-[11px]">
+                                      Liên kết không hợp lệ ({urlInfo.error})
+                                    </span>
+                                  )}
+
+                                  <div className="flex items-center gap-1.5">
+                                    {sub.status === 'pending' && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          disabled={processingSubId === sub.id || !urlInfo.valid}
+                                          onClick={() => handleApproveSubmission(sub)}
+                                          className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-2.5 py-1 rounded-lg text-[11px] disabled:opacity-50 cursor-pointer"
+                                        >
+                                          Duyệt &amp; Xuất Bản
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={processingSubId === sub.id}
+                                          onClick={() => handleRejectSubmission(sub)}
+                                          className="bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold px-2.5 py-1 rounded-lg text-[11px] disabled:opacity-50 cursor-pointer"
+                                        >
+                                          Từ Chối
+                                        </button>
+                                      </>
+                                    )}
+                                    <button
+                                      type="button"
+                                      disabled={processingSubId === sub.id}
+                                      onClick={() => handleDeleteSubmission(sub.id)}
+                                      className="text-red-600 hover:bg-red-50 font-bold px-2 py-1 rounded-lg text-[11px] cursor-pointer"
+                                    >
+                                      Xóa
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="space-y-3.5">
                     {draft.documents.map((doc, idx) => (
@@ -1876,18 +3013,22 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               placeholder="Dán link Google Drive, OneDrive, PDF hoặc link tải tại đây (https://drive.google.com/...)"
                               className="flex-1 border border-emerald-300 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 bg-white"
                             />
-                            {doc.downloadUrl && doc.downloadUrl !== '#' && (
-                              <a
-                                href={doc.downloadUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs px-3 py-1.5 rounded-lg shrink-0 transition-colors shadow-2xs"
-                                title="Mở kiểm tra đường link này trong tab mới"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                <span>Mở xem thử</span>
-                              </a>
-                            )}
+                            {(() => {
+                              const check = validateDocumentUrl(doc.downloadUrl);
+                              if (!check.valid || !check.normalizedUrl) return null;
+                              return (
+                                <a
+                                  href={check.normalizedUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs px-3 py-1.5 rounded-lg shrink-0 transition-colors shadow-2xs"
+                                  title="Mở kiểm tra đường link này trong tab mới"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                  <span>Mở xem thử</span>
+                                </a>
+                              );
+                            })()}
                           </div>
                           <p className="text-[11px] text-emerald-800/80">
                             * Khi dán link Google Drive, hãy đảm bảo đã bật quyền <em>&quot;Bất kỳ ai có đường liên kết đều có thể xem&quot;</em> để thầy cô, phụ huynh và học sinh mở được.
@@ -2001,29 +3142,59 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               )}
 
               {/* TAB 6: MEMBERS LOG */}
-              {activeTab === 'members' && (
+              {activeTab === 'members' && (() => {
+                const combinedMembers: MemberUser[] = [];
+                const seenEmails = new Set<string>();
+                for (const m of [...remoteMembers, ...memberLogList]) {
+                  const key = (m.email || m.id).toLowerCase();
+                  if (!seenEmails.has(key)) {
+                    seenEmails.add(key);
+                    combinedMembers.push(m);
+                  }
+                }
+                return (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b pb-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
                     <div>
                       <h3 className="text-base font-bold text-slate-900">
-                        Nhật Ký & Trích Xuất Thành Viên (Gmail)
+                        Nhật Ký &amp; Trích Xuất Thành Viên Google ({combinedMembers.length})
                       </h3>
                       <p className="text-xs text-slate-500">
-                        Theo dõi tài khoản phụ huynh/giáo viên/học sinh đã đăng nhập và hoạt động tải tài liệu.
+                        Danh sách thành viên đã xác thực Google qua Firebase Authentication (memberProfiles).
                       </p>
                     </div>
-                    <button
-                      onClick={exportMembersCsv}
-                      className="inline-flex items-center bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"
-                    >
-                      <Download className="w-3.5 h-3.5 mr-1" />
-                      Trích Xuất Danh Sách (CSV)
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {!isPreviewSession && (
+                        <button
+                          type="button"
+                          disabled={loadingRemoteMembers}
+                          onClick={() => {
+                            setLoadingRemoteMembers(true);
+                            fetchMemberProfilesForAdmin()
+                              .then((list) => setRemoteMembers(list))
+                              .catch(() => {})
+                              .finally(() => setLoadingRemoteMembers(false));
+                          }}
+                          className="inline-flex items-center bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 text-xs font-bold px-2.5 py-1.5 rounded-lg cursor-pointer"
+                        >
+                          <RefreshCcw className={`w-3.5 h-3.5 mr-1 ${loadingRemoteMembers ? 'animate-spin' : ''}`} />
+                          Tải Từ Firebase
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={exportMembersCsv}
+                        className="inline-flex items-center bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 mr-1" />
+                        Trích Xuất Danh Sách (CSV)
+                      </button>
+                    </div>
                   </div>
 
-                  {memberLogList.length === 0 ? (
+                  {combinedMembers.length === 0 ? (
                     <div className="text-center py-8 text-slate-400 text-xs">
-                      Chưa có phiên đăng nhập thành viên nào được ghi nhận trong phiên hiện tại.
+                      Chưa có thành viên Google nào được ghi nhận trên Firebase.
                     </div>
                   ) : (
                     <div className="overflow-x-auto border rounded-xl">
@@ -2033,11 +3204,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             <th className="px-3 py-2 text-left">Gmail / Email</th>
                             <th className="px-3 py-2 text-left">Họ và Tên</th>
                             <th className="px-3 py-2 text-left">Vai Trò</th>
-                            <th className="px-3 py-2 text-left">Thời Điểm Đăng Nhập</th>
+                            <th className="px-3 py-2 text-left">Đăng Nhập Gần Nhất</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 bg-white">
-                          {memberLogList.map((m) => (
+                          {combinedMembers.map((m) => (
                             <tr key={m.id}>
                               <td className="px-3 py-2 font-semibold text-emerald-800">
                                 {m.email}
@@ -2056,7 +3227,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     </div>
                   )}
                 </div>
-              )}
+                );
+              })()}
 
               {/* TAB 7: CHANGE PASSWORD */}
               {activeTab === 'password' && (
@@ -2189,6 +3361,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         onClick={async () => {
                           setSyncingAdmissions(true);
                           try {
+                            if (isPreviewSession || isTrustedPreviewEnvironment()) {
+                              setAdmissionsList([...MOCK_PREVIEW_ADMISSIONS]);
+                              return;
+                            }
                             const list = await syncAdmissionsWithFirestore(false);
                             setAdmissionsList(list);
                           } finally {
@@ -2391,7 +3567,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                       updateRegistrationStatus(
                                         reg.id,
                                         reg.status === 'contacted' ? 'pending' : 'contacted'
-                                      ).catch((err) => window.alert('Không cập nhật được hồ sơ trên Firebase: ' + (err instanceof Error ? err.message : String(err))))
+                                      )
                                     }
                                     className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 transition-all cursor-pointer ${
                                       reg.status === 'contacted'
@@ -2492,6 +3668,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         onClick={async () => {
                           setSyncingFeedback(true);
                           try {
+                            if (isPreviewSession || isTrustedPreviewEnvironment()) {
+                              setFeedbackList([...MOCK_PREVIEW_FEEDBACK]);
+                              return;
+                            }
                             const list = await syncFeedbackWithFirestore(false);
                             setFeedbackList(list);
                           } finally {
@@ -2683,7 +3863,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                       updateFeedbackStatus(
                                         fb.id,
                                         fb.status === 'resolved' ? 'pending' : 'resolved'
-                                      ).catch((err) => window.alert('Không cập nhật được ý kiến trên Firebase: ' + (err instanceof Error ? err.message : String(err))))
+                                      )
                                     }
                                     className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 transition-all cursor-pointer ${
                                       fb.status === 'resolved'
@@ -2755,7 +3935,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
                   {/* Detail Popover / Modal for reading long messages */}
                   {viewingFeedbackDetail && (
-                    <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
                       <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
                         <div className="flex items-start justify-between border-b pb-3">
                           <div>
@@ -2814,10 +3994,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              const nextStatus = viewingFeedbackDetail.status === 'resolved' ? 'pending' : 'resolved';
-                              void updateFeedbackStatus(viewingFeedbackDetail.id, nextStatus)
-                                .then(() => setViewingFeedbackDetail((prev) => prev ? { ...prev, status: nextStatus } : null))
-                                .catch((err) => window.alert('Không cập nhật được ý kiến trên Firebase: ' + String(err)));
+                              updateFeedbackStatus(
+                                viewingFeedbackDetail.id,
+                                viewingFeedbackDetail.status === 'resolved' ? 'pending' : 'resolved'
+                              );
+                              setViewingFeedbackDetail({
+                                ...viewingFeedbackDetail,
+                                status: viewingFeedbackDetail.status === 'resolved' ? 'pending' : 'resolved',
+                              });
                             }}
                             className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer ${
                               viewingFeedbackDetail.status === 'resolved'

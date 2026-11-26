@@ -147,18 +147,43 @@ function getProviderType(user: User): 'google' | 'password' {
   return hasGoogle ? 'google' : 'password';
 }
 
+export function isVerifiedGoogleFirebaseUser(user: User | null | undefined): boolean {
+  if (!user || typeof user.uid !== 'string' || !user.uid.trim()) return false;
+  if (typeof user.email !== 'string' || !user.email.trim()) return false;
+  return Boolean(user.providerData?.some((p) => p.providerId === 'google.com'));
+}
+
 export function buildMemberFromFirebaseUser(user: User): MemberUser {
-  const provider = getProviderType(user);
+  if (!isVerifiedGoogleFirebaseUser(user) || !user.email) {
+    throw new Error(
+      'Phiên xác thực Google không hợp lệ. Chỉ tài khoản đã đăng nhập qua Firebase Google Sign-In mới được phép.'
+    );
+  }
   return {
     id: user.uid,
     uid: user.uid,
-    email: user.email || '',
-    name: user.displayName || user.email?.split('@')[0] || 'Thành viên',
+    email: user.email,
+    name: user.displayName || user.email.split('@')[0] || 'Thành viên',
     role: 'Thành viên',
     photoURL: user.photoURL || undefined,
-    provider,
+    provider: 'google',
     loginAt: new Date().toLocaleString('vi-VN'),
   };
+}
+
+/**
+ * Trả về thành viên Google đang được Firebase Authentication xác thực thật sự (null nếu chưa xác thực)
+ */
+export function getCurrentAuthenticatedGoogleMember(): MemberUser | null {
+  if (!isFirebaseSdkReady()) return null;
+  try {
+    const { auth } = ensureFirebaseSdk();
+    const user = auth.currentUser;
+    if (!user || !isVerifiedGoogleFirebaseUser(user)) return null;
+    return buildMemberFromFirebaseUser(user);
+  } catch {
+    return null;
+  }
 }
 
 export function buildParentFromFirebaseUser(user: User, rememberSession = true): ParentUser {
@@ -216,6 +241,12 @@ export async function signInMemberWithGoogle(): Promise<
 
   try {
     const credential = await signInWithPopup(auth, provider);
+    if (!isVerifiedGoogleFirebaseUser(credential?.user)) {
+      await signOut(auth).catch(() => {});
+      throw new Error(
+        'Firebase Authentication không trả về phiên Google hợp lệ. Vui lòng đăng nhập lại.'
+      );
+    }
     await upsertMemberProfile(db, credential.user);
     return {
       redirected: false,
@@ -243,6 +274,10 @@ export async function completeGoogleRedirectIfAny(): Promise<MemberUser | null> 
     const { auth, db } = ensureFirebaseSdk();
     const result = await getRedirectResult(auth);
     if (result?.user) {
+      if (!isVerifiedGoogleFirebaseUser(result.user)) {
+        await signOut(auth).catch(() => {});
+        return null;
+      }
       await upsertMemberProfile(db, result.user);
       return buildMemberFromFirebaseUser(result.user);
     }
@@ -342,7 +377,10 @@ export async function fetchParentChildrenResults(parentUid: string): Promise<{
     return { link: null, children: [], missingIds: [] };
   }
 
-  const { db } = ensureFirebaseSdk();
+  const { auth, db } = ensureFirebaseSdk();
+  if (!auth.currentUser || auth.currentUser.uid !== parentUid) {
+    return { link: null, children: [], missingIds: [] };
+  }
   const linkRef = doc(db, 'parentLinks', parentUid);
   const linkSnap = await getDoc(linkRef);
 

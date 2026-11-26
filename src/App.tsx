@@ -1,15 +1,37 @@
-import { onlineEnabled, loadOnlineContent, logoutOnline, saveOnlineContent, isFirebaseConfigured, isOnlineAuthenticated } from './onlineStore';
+import {
+  onlineEnabled,
+  loadOnlineContent,
+  logoutOnline,
+  saveOnlineContent,
+  isFirebaseConfigured,
+  isOnlineAuthenticated,
+  hasPermission,
+  loadPrivateStudents,
+  savePrivateStudents,
+} from './onlineStore';
+import {
+  completeGoogleRedirectIfAny,
+  subscribeToFirebaseAuth,
+  isVerifiedGoogleFirebaseUser,
+  getCurrentAuthenticatedGoogleMember,
+  buildMemberFromFirebaseUser,
+  buildParentFromFirebaseUser,
+  fetchParentChildrenResults,
+  signOutFirebaseUser,
+} from './firebaseAuthStore';
 import { isTrustedPreviewEnvironment, MOCK_PREVIEW_STUDENTS, MOCK_PREVIEW_ADMISSIONS, MOCK_PREVIEW_FEEDBACK } from './authEnvironment';
-import { INITIAL_SITE_CONTENT } from './data';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   NavSection,
   SiteContent,
   EditableCardPayload,
   MemberUser,
+  ParentUser,
   NewsItem,
-  DocumentItem,
+  StudentRecord,
+  StudentResultRecord,
 } from './types';
+import { deduplicateStudents } from './studentExcelHelper';
 import {
   loadSiteContent,
   saveSiteContentLocal,
@@ -55,14 +77,19 @@ import {
 export default function App() {
   const [currentSection, setCurrentSection] = useState<NavSection>('home');
   const [content, setContent] = useState<SiteContent>(() => {
-    // Preview always starts from a clean mock baseline, not browser drafts.
-    if (isTrustedPreviewEnvironment()) {
-      return { ...INITIAL_SITE_CONTENT, students: [...MOCK_PREVIEW_STUDENTS] };
-    }
     const initial = loadSiteContent();
-    return onlineEnabled ? { ...initial, students: [] } : initial;
+    // Tách biệt tuyệt đối dữ liệu công khai và dữ liệu học sinh riêng tư:
+    // Người chưa đăng nhập không bao giờ có sẵn danh sách học sinh trong trạng thái công khai.
+    return { ...initial, students: [] };
   });
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
+
+  // Trạng thái dữ liệu học sinh riêng tư (chỉ nạp từ Firebase khi đã xác thực quyền quản trị)
+  const [privateStudents, setPrivateStudents] = useState<StudentRecord[]>([]);
+  const [privateStudentsLoading, setPrivateStudentsLoading] = useState<boolean>(false);
+  const [privateStudentsLoaded, setPrivateStudentsLoaded] = useState<boolean>(false);
+  const [privateStudentsError, setPrivateStudentsError] = useState<string | null>(null);
+  const authSessionVersionRef = useRef<number>(0);
 
   // Authentication states
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -121,10 +148,113 @@ export default function App() {
     };
   }, []);
 
-  // Member states
+  // Member & Parent Firebase Auth states (độc lập hoàn toàn với phiên Quản trị)
   const [currentMember, setCurrentMember] = useState<MemberUser | null>(null);
+  const [currentParent, setCurrentParent] = useState<ParentUser | null>(null);
+  const [parentChildren, setParentChildren] = useState<StudentResultRecord[]>([]);
+  const [parentChildrenLoading, setParentChildrenLoading] = useState<boolean>(false);
+  const [parentChildrenError, setParentChildrenError] = useState<string | null>(null);
   const [isMemberModalOpen, setIsMemberModalOpen] = useState<boolean>(false);
   const [memberLogList, setMemberLogList] = useState<MemberUser[]>([]);
+  const firebaseUserVersionRef = useRef<number>(0);
+
+  // Tải kết quả học tập CHỈ của con em phụ huynh đã liên kết trong /parentLinks/{uid}
+  const loadLinkedParentChildren = useCallback(async (uid: string) => {
+    const reqVer = firebaseUserVersionRef.current;
+    setParentChildrenLoading(true);
+    setParentChildrenError(null);
+    try {
+      const { children } = await fetchParentChildrenResults(uid);
+      if (reqVer !== firebaseUserVersionRef.current) return;
+      setParentChildren(children);
+      setParentChildrenError(null);
+    } catch (err: any) {
+      if (reqVer !== firebaseUserVersionRef.current) return;
+      setParentChildren([]);
+      setParentChildrenError(
+        err?.message || 'Không thể tải kết quả học tập của con em từ Firebase.'
+      );
+    } finally {
+      if (reqVer === firebaseUserVersionRef.current) {
+        setParentChildrenLoading(false);
+      }
+    }
+  }, []);
+
+  // Tự động khôi phục phiên Thành viên Google / Phụ huynh qua Firebase Auth chính thức khi tải lại trang
+  useEffect(() => {
+    if (isTrustedPreviewEnvironment()) return;
+
+    void completeGoogleRedirectIfAny()
+      .then((redirectedMember) => {
+        if (redirectedMember) {
+          setCurrentMember(redirectedMember);
+          setMemberLogList((prev) => [
+            redirectedMember,
+            ...prev.filter((m) => m.email !== redirectedMember.email),
+          ]);
+        }
+      })
+      .catch((err) => {
+        console.warn('Hoàn tất chuyển hướng Google Auth chưa thành công:', err);
+      });
+
+    const unsubscribe = subscribeToFirebaseAuth((fbUser) => {
+      firebaseUserVersionRef.current += 1;
+      const version = firebaseUserVersionRef.current;
+
+      if (!fbUser) {
+        setCurrentMember(null);
+        setCurrentParent(null);
+        setParentChildren([]);
+        setParentChildrenError(null);
+        setParentChildrenLoading(false);
+        return;
+      }
+
+      if (isVerifiedGoogleFirebaseUser(fbUser)) {
+        const member = buildMemberFromFirebaseUser(fbUser);
+        setCurrentMember(member);
+        setMemberLogList((prev) => [
+          member,
+          ...prev.filter((m) => m.email !== member.email),
+        ]);
+        // Thành viên Google mặc định KHÔNG có quyền xem dữ liệu học sinh;
+        // chỉ hiển thị kết quả con em nếu Quản trị viên đã chủ động liên kết UID này trong parentLinks/{uid}.
+        setParentChildrenLoading(true);
+        void fetchParentChildrenResults(fbUser.uid)
+          .then(({ link, children }) => {
+            if (version !== firebaseUserVersionRef.current) return;
+            if (link && link.studentIds.length > 0) {
+              setCurrentParent(buildParentFromFirebaseUser(fbUser, true));
+              setParentChildren(children);
+            } else {
+              setCurrentParent(null);
+              setParentChildren([]);
+            }
+            setParentChildrenError(null);
+          })
+          .catch(() => {
+            if (version !== firebaseUserVersionRef.current) return;
+            setCurrentParent(null);
+            setParentChildren([]);
+          })
+          .finally(() => {
+            if (version === firebaseUserVersionRef.current) {
+              setParentChildrenLoading(false);
+            }
+          });
+      } else {
+        // Tài khoản Phụ huynh đăng nhập bằng Email / Mật khẩu
+        setCurrentMember(null);
+        const parent = buildParentFromFirebaseUser(fbUser, true);
+        setCurrentParent(parent);
+        void loadLinkedParentChildren(fbUser.uid);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [loadLinkedParentChildren]);
 
   // Universal Card Editor state
   const [editCardData, setEditCardData] = useState<EditableCardPayload | null>(null);
@@ -137,11 +267,14 @@ export default function App() {
   // Hàm đăng xuất thống nhất cho Quản trị viên
   const handleAdminLogout = () => {
     logoutOnline();
-    if (isPreviewMode) {
-      setContent({ ...INITIAL_SITE_CONTENT, students: [...MOCK_PREVIEW_STUDENTS] });
-    }
+    // Tăng phiên bản phiên làm việc để vô hiệu hóa mọi yêu cầu bất đồng bộ đang chạy (tránh dữ liệu cũ quay lại)
+    authSessionVersionRef.current += 1;
     setIsAdmin(false);
     setIsPreviewMode(false);
+    setPrivateStudents([]);
+    setPrivateStudentsLoaded(false);
+    setPrivateStudentsLoading(false);
+    setPrivateStudentsError(null);
     setShowAdminButton(false);
     setIsAdminModalOpen(false);
     setEditCardData(null);
@@ -149,6 +282,146 @@ export default function App() {
     setAdminNotice('Đã đăng xuất an toàn khỏi chế độ quản trị.');
     setTimeout(() => setAdminNotice(null), 3000);
   };
+
+  // Đọc danh sách học sinh riêng tư từ Firebase (chỉ khi có phiên quản trị hợp lệ)
+  const loadAdminPrivateStudents = useCallback(async (previewFlag: boolean): Promise<StudentRecord[]> => {
+    const requestVersion = authSessionVersionRef.current;
+
+    if (previewFlag && isTrustedPreviewEnvironment()) {
+      const previewList = structuredClone(MOCK_PREVIEW_STUDENTS);
+      if (requestVersion === authSessionVersionRef.current) {
+        setPrivateStudents(previewList);
+        setPrivateStudentsLoaded(true);
+        setPrivateStudentsError(null);
+        setPrivateStudentsLoading(false);
+      }
+      return previewList;
+    }
+
+    if (!isOnlineAuthenticated() || !hasPermission('admin')) {
+      if (requestVersion === authSessionVersionRef.current) {
+        setPrivateStudents([]);
+        setPrivateStudentsLoaded(false);
+        setPrivateStudentsLoading(false);
+      }
+      throw new Error('Phiên đăng nhập quản trị không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.');
+    }
+
+    setPrivateStudentsLoading(true);
+    setPrivateStudentsError(null);
+    try {
+      const loaded = await loadPrivateStudents();
+      // Chống race condition: nếu quản trị viên đã đăng xuất trước khi Firebase phản hồi, hủy cập nhật UI
+      if (requestVersion !== authSessionVersionRef.current || !isOnlineAuthenticated()) {
+        return [];
+      }
+      const normalized = (loaded || []).map((st) => ({
+        ...st,
+        campus: st.campus || 'Trường chính',
+      }));
+      setPrivateStudents(normalized);
+      setPrivateStudentsLoaded(true);
+      setPrivateStudentsError(null);
+      return normalized;
+    } catch (err: any) {
+      if (requestVersion !== authSessionVersionRef.current) {
+        return [];
+      }
+      const errMsg = err?.message || 'Không thể tải danh sách học sinh từ Firebase.';
+      setPrivateStudentsError(errMsg);
+      // Nếu token hết hạn và onlineStore đã thu hồi phiên, yêu cầu đăng nhập lại và xóa dữ liệu khỏi UI
+      if (!isOnlineAuthenticated()) {
+        setIsAdmin(false);
+        setIsPreviewMode(false);
+        setPrivateStudents([]);
+        setPrivateStudentsLoaded(false);
+      }
+      throw new Error(errMsg);
+    } finally {
+      if (requestVersion === authSessionVersionRef.current) {
+        setPrivateStudentsLoading(false);
+      }
+    }
+  }, []);
+
+  // Kích hoạt phiên quản trị sau khi đăng nhập thành công và đồng bộ ngay danh sách học sinh riêng tư
+  const handleSyncPrivateStudentsAfterLogin = useCallback(
+    async (previewFlag: boolean): Promise<StudentRecord[]> => {
+      authSessionVersionRef.current += 1;
+      setIsAdmin(true);
+      setIsPreviewMode(previewFlag);
+      return loadAdminPrivateStudents(previewFlag);
+    },
+    [loadAdminPrivateStudents]
+  );
+
+  // Lưu danh sách học sinh riêng tư lên Firebase và đọc lại từ Firebase để đối chiếu xác nhận
+  const handleSavePrivateStudents = useCallback(
+    async (studentsToSave: StudentRecord[]): Promise<StudentRecord[]> => {
+      if (!Array.isArray(studentsToSave) || studentsToSave.length === 0) {
+        throw new Error('Không cho phép lưu hoặc ghi đè danh sách học sinh bằng danh sách rỗng.');
+      }
+
+      const validatedStudents = deduplicateStudents(studentsToSave);
+      if (validatedStudents.length === 0) {
+        throw new Error('Danh sách học sinh không có bản ghi hợp lệ để lưu.');
+      }
+
+      if (isPreviewMode && isTrustedPreviewEnvironment()) {
+        setPrivateStudents(validatedStudents);
+        setPrivateStudentsLoaded(true);
+        setPrivateStudentsError(null);
+        return validatedStudents;
+      }
+
+      if (!isOnlineAuthenticated() || !hasPermission('admin')) {
+        setIsAdmin(false);
+        setPrivateStudents([]);
+        setPrivateStudentsLoaded(false);
+        throw new Error('Phiên đăng nhập quản trị đã hết hạn. Vui lòng đăng nhập lại để lưu dữ liệu.');
+      }
+
+      const requestVersion = authSessionVersionRef.current;
+      await savePrivateStudents(validatedStudents);
+
+      // Đọc lại từ Firebase để đối chiếu chắc chắn dữ liệu đã được lưu thành công
+      const verified = await loadPrivateStudents();
+      if (requestVersion !== authSessionVersionRef.current || !isOnlineAuthenticated()) {
+        return [];
+      }
+
+      const normalizedVerified = (verified || []).map((st) => ({
+        ...st,
+        campus: st.campus || 'Trường chính',
+      }));
+      setPrivateStudents(normalizedVerified);
+      setPrivateStudentsLoaded(true);
+      setPrivateStudentsError(null);
+
+      return normalizedVerified;
+    },
+    [isPreviewMode]
+  );
+
+  // Nếu có phiên quản trị Firebase hợp lệ sau khi khôi phục trạng thái, tự động nạp danh sách học sinh
+  useEffect(() => {
+    if (isTrustedPreviewEnvironment()) return;
+    if (isOnlineAuthenticated() && hasPermission('admin')) {
+      if (!isAdmin) {
+        setIsAdmin(true);
+        setIsPreviewMode(false);
+      }
+      if (!privateStudentsLoaded && !privateStudentsLoading && !privateStudentsError) {
+        void loadAdminPrivateStudents(false).catch(() => {});
+      }
+    }
+  }, [
+    isAdmin,
+    privateStudentsLoaded,
+    privateStudentsLoading,
+    privateStudentsError,
+    loadAdminPrivateStudents,
+  ]);
 
   // Initialize admissions & feedback real-time sync with server & multi-tab
   // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Môi trường xem trước AI Studio hoàn toàn không gọi sync hay polling với Firestore production
@@ -180,19 +453,33 @@ export default function App() {
         return;
       }
       const remoteSchoolInfo = remoteData.schoolInfo;
-      setContent((prev) => ({
-        ...prev,
-        ...remoteData,
-        students: onlineEnabled ? [] : prev.students,
-        schoolInfo: {
-          ...prev.schoolInfo,
-          ...remoteSchoolInfo,
-          stats: {
-            ...prev.schoolInfo.stats,
-            ...(remoteSchoolInfo.stats || {}),
+      setContent((prev) => {
+        let mergedNews = remoteData.news || prev.news;
+        if (Array.isArray(prev.news) && Array.isArray(remoteData.news)) {
+          const remoteNewsIds = new Set(remoteData.news.map((n: any) => n.id));
+          const localOnlyNews = prev.news.filter(
+            (n: any) => !remoteNewsIds.has(n.id) && String(n.id).startsWith('news-')
+          );
+          if (localOnlyNews.length > 0) {
+            mergedNews = [...localOnlyNews, ...remoteData.news];
+          }
+        }
+        return {
+          ...prev,
+          ...remoteData,
+          news: mergedNews,
+          // Giữ tách biệt tuyệt đối: publicContent không bao giờ chứa hoặc ghi đè danh sách học sinh riêng tư
+          students: [],
+          schoolInfo: {
+            ...prev.schoolInfo,
+            ...remoteSchoolInfo,
+            stats: {
+              ...prev.schoolInfo.stats,
+              ...(remoteSchoolInfo.stats || {}),
+            },
           },
-        },
-      }));
+        };
+      });
     }).catch((error) => console.error('Không tải được dữ liệu trực tuyến:', error));
     return () => { active = false; };
   }, []);
@@ -450,12 +737,23 @@ export default function App() {
                   imageUrl: updatedCard.imageUrl || n.imageUrl,
                   date: updatedCard.extraField1Value || n.date,
                   author: updatedCard.extraField2Value || n.author,
-                  // Keep the home-page pin switch from the universal news editor.
-                  isFeatured: updatedCard.isFeatured ?? n.isFeatured,
-                  // Keep original external-link metadata when editing a shared news item.
-                  isExternalLink: updatedCard.isExternalLink ?? n.isExternalLink,
-                  externalUrl: updatedCard.externalUrl ?? n.externalUrl,
-                  sourceName: updatedCard.sourceName ?? n.sourceName,
+                  isFeatured:
+                    updatedCard.isFeatured !== undefined
+                      ? updatedCard.isFeatured
+                      : n.isFeatured,
+                  isExternalLink: Boolean(
+                    updatedCard.extraField3Value?.trim() ||
+                      updatedCard.externalUrl ||
+                      n.externalUrl
+                  ),
+                  externalUrl:
+                    updatedCard.extraField3Value !== undefined
+                      ? updatedCard.extraField3Value.trim()
+                      : (updatedCard.externalUrl || n.externalUrl),
+                  sourceName:
+                    updatedCard.extraField4Value !== undefined
+                      ? updatedCard.extraField4Value.trim()
+                      : (updatedCard.sourceName || n.sourceName),
                 }
               : n
           );
@@ -473,6 +771,10 @@ export default function App() {
                   description: updatedCard.content,
                   imageUrl: updatedCard.imageUrl || a.imageUrl,
                   date: updatedCard.extraField1Value || a.date,
+                  highlight:
+                    updatedCard.highlight !== undefined
+                      ? updatedCard.highlight
+                      : a.highlight,
                 }
               : a
           );
@@ -607,7 +909,7 @@ export default function App() {
 
       case 'students':
         if (updatedCard.itemId) {
-          nextContent.students = nextContent.students.map((s) =>
+          const updatedStudents = privateStudents.map((s) =>
             s.id === updatedCard.itemId
               ? {
                   ...s,
@@ -618,6 +920,19 @@ export default function App() {
                 }
               : s
           );
+          if (isPreviewMode) {
+            setPrivateStudents(updatedStudents);
+            setAdminNotice(`[Xem trước AI Studio]: Đã cập nhật hồ sơ "${updatedCard.title}" trong bộ nhớ tạm.`);
+          } else {
+            setAdminNotice('⏳ Đang lưu hồ sơ học sinh lên khu vực bảo mật Firebase...');
+            void handleSavePrivateStudents(updatedStudents)
+              .then((verified) =>
+                setAdminNotice(`✅ Đã lưu và đối chiếu ${verified.length} hồ sơ học sinh trên Firebase.`)
+              )
+              .catch((e) => setAdminNotice(`❌ CHƯA lưu hồ sơ học sinh lên Firebase: ${e.message}`));
+          }
+          setTimeout(() => setAdminNotice(null), 4000);
+          return;
         }
         break;
 
@@ -725,7 +1040,7 @@ export default function App() {
     if (isPreviewMode) {
       // Chế độ preview AI Studio: CHỈ thay đổi React state trong bộ nhớ, KHÔNG ghi localStorage hoặc Firestore production
       setAdminNotice(`[Xem trước AI Studio]: Đã cập nhật thẻ "${updatedCard.title}" trong bộ nhớ tạm (không ghi localStorage / Firestore).`);
-    } else if (onlineEnabled && isOnlineAuthenticated()) {
+    } else if (isOnlineAuthenticated()) {
       setAdminNotice('Đang lưu nội dung lên Firebase...');
       void saveOnlineContent(nextContent)
         .then(() => setAdminNotice('Đã lưu nội dung công khai lên Firebase.'))
@@ -737,84 +1052,178 @@ export default function App() {
     setTimeout(() => setAdminNotice(null), 3500);
   };
 
-  // Ghim / bỏ ghim tin nổi bật: must persist in the same publicContent document
-  // as regular news. Do not report success until Firebase confirms the write.
-  const handleToggleFeatureNews = async (newsId: string): Promise<void> => {
-    if (!isAdmin) {
-      setAdminNotice('Bạn cần đăng nhập quản trị để ghim tin nổi bật.');
-      return;
-    }
-
-    const current = content.news.find((news) => news.id === newsId);
-    if (!current) {
-      setAdminNotice('Không tìm thấy bài viết cần ghim.');
-      return;
-    }
-    const nextFeatured = !Boolean(current.isFeatured);
+  // Nhanh chóng bật/tắt ghim bài đăng nổi bật lên Trang Chủ
+  const handleToggleFeatureNews = (newsId: string) => {
+    const target = content.news.find((n) => n.id === newsId);
+    if (!target) return;
+    const nextFeatured = !target.isFeatured;
     const nextContent: SiteContent = {
       ...content,
-      news: content.news.map((news) =>
-        news.id === newsId ? { ...news, isFeatured: nextFeatured } : news
+      news: content.news.map((n) =>
+        n.id === newsId ? { ...n, isFeatured: nextFeatured } : n
       ),
+    };
+    setContent(nextContent);
+    if (isPreviewMode) {
+      setAdminNotice(
+        nextFeatured
+          ? `[Xem trước] Đã ghim bài "${target.title}" lên Trang Chủ!`
+          : `[Xem trước] Đã bỏ ghim bài "${target.title}" khỏi Trang Chủ.`
+      );
+    } else if (isOnlineAuthenticated()) {
+      setAdminNotice('Đang lưu thay đổi ghim lên Firebase...');
+      void saveOnlineContent(nextContent)
+        .then(() =>
+          setAdminNotice(
+            nextFeatured
+              ? `Đã ghim "${target.title}" lên Trang Chủ (Firebase).`
+              : `Đã bỏ ghim "${target.title}" khỏi Trang Chủ (Firebase).`
+          )
+        )
+        .catch((e) => setAdminNotice(`CHƯA lưu lên Firebase: ${e.message}`));
+    } else {
+      saveSiteContentLocal(nextContent);
+      setAdminNotice(
+        nextFeatured
+          ? `Đã ghim nổi bật bài "${target.title}" lên đầu Trang Chủ!`
+          : `Đã bỏ ghim bài "${target.title}" khỏi Trang Chủ.`
+      );
+    }
+    setTimeout(() => setAdminNotice(null), 3500);
+  };
+
+  // Đăng tin bài mới hoặc chia sẻ link bài báo từ Internet
+  const handleAddNews = async (newNews: Omit<NewsItem, 'id'>): Promise<boolean> => {
+    const item: NewsItem = {
+      id: `news-${Date.now()}`,
+      title: newNews.title.trim(),
+      category: newNews.category || 'tin-tuc',
+      categoryLabel:
+        newNews.categoryLabel || (newNews.isExternalLink ? 'Tin Báo Chí' : 'Tin Tức'),
+      summary: newNews.summary.trim(),
+      content: (newNews.content || newNews.summary || newNews.title).trim(),
+      date: newNews.date?.trim() || new Date().toLocaleDateString('vi-VN'),
+      author:
+        newNews.author?.trim() ||
+        (newNews.sourceName ? `Nguồn: ${newNews.sourceName.trim()}` : 'Ban Truyền Thông TH Lê Lợi'),
+      imageUrl:
+        newNews.imageUrl?.trim() ||
+        'https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=900&q=80',
+      isFeatured: Boolean(newNews.isFeatured),
+      isExternalLink: Boolean(newNews.isExternalLink || newNews.externalUrl),
+      externalUrl: newNews.externalUrl?.trim() || undefined,
+      sourceName:
+        newNews.sourceName?.trim() ||
+        (newNews.isExternalLink || newNews.externalUrl ? 'Báo chí / Internet' : undefined),
+    };
+
+    const nextContent: SiteContent = {
+      ...content,
+      news: [item, ...content.news],
     };
 
     if (isPreviewMode) {
       setContent(nextContent);
-      setAdminNotice(`[Xem trước] ${nextFeatured ? 'Đã ghim' : 'Đã bỏ ghim'} bài viết trong dữ liệu mẫu.`);
-      return;
-    }
-    if (!onlineEnabled || !isOnlineAuthenticated()) {
-      setAdminNotice('Chưa lưu ghim: cần đăng nhập quản trị Firebase.');
-      return;
+      setAdminNotice(
+        item.isExternalLink
+          ? `[Xem trước AI Studio] Đã đăng bài chia sẻ từ ${item.sourceName || 'Internet'}: "${item.title}"!`
+          : `[Xem trước AI Studio] Đã đăng bài viết mới: "${item.title}"!`
+      );
+      setTimeout(() => setAdminNotice(null), 4000);
+      return true;
     }
 
-    setAdminNotice('Đang lưu trạng thái ghim lên Firebase...');
+    if (!isOnlineAuthenticated()) {
+      const errMsg =
+        'Chưa đăng nhập Firebase Admin! Quý thầy cô vui lòng bấm nút "Quản trị" trên thanh menu để đăng nhập trước khi đăng bài lên website chính thức.';
+      setAdminNotice(`⚠️ ${errMsg}`);
+      setTimeout(() => setAdminNotice(null), 6000);
+      throw new Error(errMsg);
+    }
+
+    setAdminNotice('⏳ Đang lưu bài viết lên hệ thống Firebase Production...');
     try {
       await saveOnlineContent(nextContent);
+      // CHỈ KHI FIREBASE XÁC NHẬN ĐÃ LƯU THÀNH CÔNG:
       setContent(nextContent);
-      setAdminNotice(`${nextFeatured ? 'Đã ghim' : 'Đã bỏ ghim'} bài viết trên trang chủ và lưu lên Firebase.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Lỗi không xác định';
-      console.error('Không lưu được trạng thái ghim:', error);
-      setAdminNotice(`CHƯA lưu ghim lên Firebase: ${message}`);
+      saveSiteContentLocal(nextContent);
+      setAdminNotice(
+        item.isExternalLink
+          ? `✅ Đã đăng và lưu trực tuyến thành công bài chia sẻ từ ${item.sourceName || 'Internet'} lên Firebase!`
+          : `✅ Đã đăng và lưu trực tuyến thành công bài viết "${item.title}" lên Firebase!`
+      );
+      setTimeout(() => setAdminNotice(null), 4000);
+      return true;
+    } catch (err: any) {
+      console.error('Lỗi khi lưu tin tức lên Firebase:', err);
+      const errMsg = err?.message || 'Lỗi mạng khi kết nối tới Firebase';
+      setAdminNotice(`❌ Chưa thể lưu lên Firebase: ${errMsg}`);
+      setTimeout(() => setAdminNotice(null), 5000);
+      throw new Error(errMsg);
     }
   };
 
-  // Đăng tin / chia sẻ liên kết: chỉ xác nhận thành công sau khi Firestore đã lưu.
-  const handleAddNews = async (newNews: Omit<NewsItem, 'id'>): Promise<boolean> => {
-    if (!isAdmin) {
-      setAdminNotice('Bạn cần đăng nhập quản trị để đăng bài.');
-      return false;
+  // Xóa tin tức
+  const handleDeleteNews = (newsId: string) => {
+    const target = content.news.find((n) => n.id === newsId);
+    const nextContent: SiteContent = {
+      ...content,
+      news: content.news.filter((n) => n.id !== newsId),
+    };
+    setContent(nextContent);
+    if (!isPreviewMode) {
+      if (isOnlineAuthenticated()) {
+        saveOnlineContent(nextContent).catch((err) => {
+          console.error('Lỗi khi xóa bài viết trên Firebase:', err);
+        });
+      }
+      saveSiteContentLocal(nextContent);
     }
-    const item: NewsItem = { ...newNews, id: `news-${Date.now()}` };
-    const nextContent: SiteContent = { ...content, news: [item, ...content.news] };
+    setAdminNotice(`Đã xóa bài viết "${target?.title || ''}".`);
+    setTimeout(() => setAdminNotice(null), 3500);
+  };
 
+  // Nhanh chóng bật/tắt làm nổi bật hoạt động trên Trang Chủ
+  const handleToggleHighlightActivity = (actId: string) => {
+    const target = content.activities.find((a) => a.id === actId);
+    if (!target) return;
+    const nextHighlight = !target.highlight;
+    const nextContent: SiteContent = {
+      ...content,
+      activities: content.activities.map((a) =>
+        a.id === actId ? { ...a, highlight: nextHighlight } : a
+      ),
+    };
+    setContent(nextContent);
     if (isPreviewMode) {
-      setContent(nextContent);
-      setAdminNotice(`[Xem trước] Đã tạo bài "${item.title}" trong dữ liệu mẫu.`);
-      return true;
+      setAdminNotice(
+        nextHighlight
+          ? `[Xem trước] Đã đưa hoạt động "${target.title}" lên Trang Chủ!`
+          : `[Xem trước] Đã bỏ nổi bật hoạt động "${target.title}".`
+      );
+    } else if (isOnlineAuthenticated()) {
+      setAdminNotice('Đang lưu thay đổi hoạt động lên Firebase...');
+      void saveOnlineContent(nextContent)
+        .then(() =>
+          setAdminNotice(
+            nextHighlight
+              ? `Đã đưa hoạt động "${target.title}" lên Trang Chủ.`
+              : `Đã bỏ nổi bật hoạt động "${target.title}".`
+          )
+        )
+        .catch((e) => setAdminNotice(`CHƯA lưu lên Firebase: ${e.message}`));
+    } else {
+      saveSiteContentLocal(nextContent);
+      setAdminNotice(
+        nextHighlight
+          ? `Đã làm nổi bật hoạt động "${target.title}" trên Trang Chủ!`
+          : `Đã hủy nổi bật hoạt động "${target.title}".`
+      );
     }
-
-    if (!onlineEnabled || !isOnlineAuthenticated()) {
-      setAdminNotice('Chưa đăng: cần đăng nhập tài khoản quản trị Firebase.');
-      return false;
-    }
-
-    setAdminNotice('Đang lưu bài viết lên Firebase...');
-    try {
-      await saveOnlineContent(nextContent);
-      setContent(nextContent);
-      setAdminNotice(`Đã đăng và lưu lên Firebase: "${item.title}".`);
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Lỗi không xác định';
-      console.error('Không thể đăng tin lên Firebase:', error);
-      setAdminNotice(`CHƯA đăng bài: ${message}`);
-      return false;
-    }
+    setTimeout(() => setAdminNotice(null), 3500);
   };
 
-  // Document download counter
+  // Document download counter (chỉ tăng khi mở tài liệu có liên kết thật hợp lệ)
   const handleIncrementDownload = (docId: string) => {
     const updatedDocs = content.documents.map((d) =>
       d.id === docId ? { ...d, downloadCount: d.downloadCount + 1 } : d
@@ -826,19 +1235,49 @@ export default function App() {
     }
   };
 
-  // Member uploads a new document
-  const handleMemberUploadDoc = (newDoc: DocumentItem) => {
-    const next = { ...content, documents: [newDoc, ...content.documents] };
-    setContent(next);
-    if (!isPreviewMode) {
-      saveSiteContentLocal(next);
+  // Member Google login success (chỉ chấp nhận phiên Google đã được Firebase Authentication xác thực thật)
+  const handleMemberLoginSuccess = (member: MemberUser) => {
+    const verifiedFromFirebase = getCurrentAuthenticatedGoogleMember();
+    const accepted = verifiedFromFirebase || (
+      member.provider === 'google' && member.uid && member.email
+        ? { ...member, role: 'Thành viên' as const }
+        : null
+    );
+    if (!accepted) {
+      setAdminNotice('Chỉ chấp nhận đăng nhập thành viên qua Google Sign-In chính thức của Firebase.');
+      setTimeout(() => setAdminNotice(null), 4000);
+      return;
     }
+    setCurrentMember(accepted);
+    setMemberLogList((prev) => [accepted, ...prev.filter((m) => m.email !== accepted.email)]);
+    setAdminNotice(`Đã đăng nhập thành viên Google: ${accepted.email}`);
+    setTimeout(() => setAdminNotice(null), 3500);
   };
 
-  // Member login success
-  const handleMemberLoginSuccess = (member: MemberUser) => {
-    setCurrentMember(member);
-    setMemberLogList((prev) => [member, ...prev.filter((m) => m.email !== member.email)]);
+  // Parent Email/Password login success
+  const handleParentLoginSuccess = (parent: ParentUser) => {
+    setCurrentMember(null);
+    setCurrentParent(parent);
+    void loadLinkedParentChildren(parent.uid);
+    setAdminNotice(`Đã đăng nhập tài khoản phụ huynh: ${parent.email}`);
+    setTimeout(() => setAdminNotice(null), 3500);
+  };
+
+  // Đăng xuất thật khỏi Firebase Auth cho cả Thành viên Google & Phụ huynh
+  const handleFirebaseUserLogout = async () => {
+    firebaseUserVersionRef.current += 1;
+    try {
+      await signOutFirebaseUser();
+    } catch {
+      // Vẫn xóa sạch trạng thái trên giao diện
+    }
+    setCurrentMember(null);
+    setCurrentParent(null);
+    setParentChildren([]);
+    setParentChildrenError(null);
+    setParentChildrenLoading(false);
+    setAdminNotice('Đã đăng xuất an toàn khỏi hệ thống.');
+    setTimeout(() => setAdminNotice(null), 3000);
   };
 
   return (
@@ -943,8 +1382,14 @@ export default function App() {
         }}
         onAdminLogout={handleAdminLogout}
         currentMember={currentMember}
+        currentParent={currentParent}
         onOpenMemberLogin={() => setIsMemberModalOpen(true)}
-        onMemberLogout={() => setCurrentMember(null)}
+        onMemberLogout={() => {
+          void handleFirebaseUserLogout();
+        }}
+        onParentLogout={() => {
+          void handleFirebaseUserLogout();
+        }}
         onOpenAdmissionsSummary={() => setIsAdmissionsSummaryOpen(true)}
       />
 
@@ -971,6 +1416,7 @@ export default function App() {
               setCurrentSection('news');
             }}
             onToggleFeatureNews={handleToggleFeatureNews}
+            onToggleHighlightActivity={handleToggleHighlightActivity}
           />
         )}
 
@@ -999,6 +1445,7 @@ export default function App() {
             onSelectNews={setSelectedNews}
             onToggleFeatureNews={handleToggleFeatureNews}
             onAddNews={handleAddNews}
+            onDeleteNews={handleDeleteNews}
           />
         )}
 
@@ -1007,6 +1454,7 @@ export default function App() {
             activities={content.activities}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
+            onToggleHighlightActivity={handleToggleHighlightActivity}
           />
         )}
 
@@ -1020,22 +1468,41 @@ export default function App() {
 
         {currentSection === 'student-lookup' && (
           <StudentLookupSection
-            students={content.students}
+            students={isAdmin ? privateStudents : []}
             isAdmin={isAdmin}
+            isLoading={privateStudentsLoading}
+            loadError={privateStudentsError}
+            onReloadStudents={() => {
+              void loadAdminPrivateStudents(isPreviewMode).catch(() => {});
+            }}
             onEditCard={handleOpenEditCard}
-            onOpenAdmin={() => setIsAdminModalOpen(true)}
-            onUpdateStudents={(newStudents) => {
-              const next = { ...content, students: newStudents };
-              setContent(next);
-              if (!isPreviewMode) {
-                saveSiteContentLocal(next);
-              }
+            onOpenAdmin={() => {
+              setAdminInitialTab('students');
+              setIsAdminModalOpen(true);
+            }}
+            onSavePrivateStudents={async (newStudents) => {
+              const verified = await handleSavePrivateStudents(newStudents);
               setAdminNotice(
                 isPreviewMode
-                  ? '[Xem trước AI Studio]: Đã cập nhật danh sách học sinh trong bộ nhớ tạm.'
-                  : 'Danh sách mới chỉ được sửa trên màn hình. Hãy vào quản trị và lưu riêng dữ liệu học sinh để cập nhật Firebase.'
+                  ? `[Xem trước AI Studio]: Đã cập nhật ${verified.length} học sinh trong bộ nhớ tạm.`
+                  : `✅ Đã lưu và đối chiếu thành công ${verified.length} hồ sơ học sinh trên Firebase.`
               );
-              setTimeout(() => setAdminNotice(null), 3500);
+              setTimeout(() => setAdminNotice(null), 4500);
+              return verified;
+            }}
+            currentParent={currentParent}
+            currentMember={currentMember}
+            parentChildren={parentChildren}
+            parentChildrenLoading={parentChildrenLoading}
+            parentChildrenError={parentChildrenError}
+            onParentLoginSuccess={handleParentLoginSuccess}
+            onParentLogout={() => {
+              void handleFirebaseUserLogout();
+            }}
+            onReloadParentChildren={() => {
+              if (currentParent?.uid) {
+                void loadLinkedParentChildren(currentParent.uid);
+              }
             }}
           />
         )}
@@ -1047,7 +1514,6 @@ export default function App() {
             onEditCard={handleOpenEditCard}
             currentMember={currentMember}
             onOpenMemberLogin={() => setIsMemberModalOpen(true)}
-            onUploadDocument={handleMemberUploadDoc}
             onIncrementDownload={handleIncrementDownload}
           />
         )}
@@ -1089,7 +1555,10 @@ export default function App() {
       {/* Admin Dashboard & Login Modal (Triggered by Ctrl+K) */}
       <AdminModal
         isOpen={isAdminModalOpen}
-        onClose={() => setIsAdminModalOpen(false)}
+        onClose={() => {
+          setIsAdminModalOpen(false);
+          setAdminInitialTab('school');
+        }}
         isAdmin={isAdmin}
         onLoginSuccess={(isPreview = false) => {
           setIsAdmin(true);
@@ -1097,15 +1566,22 @@ export default function App() {
         }}
         onLogout={handleAdminLogout}
         content={content}
+        privateStudents={isAdmin ? privateStudents : []}
+        privateStudentsLoading={privateStudentsLoading}
+        privateStudentsLoaded={privateStudentsLoaded}
+        privateStudentsError={privateStudentsError}
+        onSyncPrivateStudentsAfterLogin={handleSyncPrivateStudentsAfterLogin}
+        onReloadPrivateStudents={() => loadAdminPrivateStudents(isPreviewMode)}
+        onSavePrivateStudents={handleSavePrivateStudents}
         onSaveContent={(newContent, published = false) => {
-          if (!isPreviewMode && !onlineEnabled) saveSiteContentLocal(newContent, !published);
-          setContent(newContent);
+          const publicOnlyContent: SiteContent = { ...newContent, students: [] };
+          if (!isPreviewMode && !onlineEnabled) saveSiteContentLocal(publicOnlyContent, !published);
+          setContent(publicOnlyContent);
         }}
         onResetContent={() => {
-          // A preview reset must never touch persisted production/local drafts.
           const def = isPreviewMode
-            ? { ...INITIAL_SITE_CONTENT, students: [...MOCK_PREVIEW_STUDENTS] }
-            : resetSiteContentToDefault();
+            ? { ...resetSiteContentToDefault(), students: [] }
+            : { ...resetSiteContentToDefault(), students: [] };
           setContent(def);
         }}
         memberLogList={memberLogList}
@@ -1116,7 +1592,15 @@ export default function App() {
       <MemberLoginModal
         isOpen={isMemberModalOpen}
         onClose={() => setIsMemberModalOpen(false)}
+        currentMember={currentMember}
         onLoginSuccess={handleMemberLoginSuccess}
+        onLogout={() => {
+          void handleFirebaseUserLogout();
+        }}
+        onOpenParentLookup={() => {
+          setIsMemberModalOpen(false);
+          handleNavigate('student-lookup');
+        }}
       />
 
       {/* Admissions Consolidated Summary Modal */}
