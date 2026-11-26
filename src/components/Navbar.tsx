@@ -26,7 +26,7 @@ import {
   MessageSquareText,
   Lock,
 } from 'lucide-react';
-import { NavSection, SchoolInfo, MemberUser, AdmissionRegistration, FeedbackSubmission } from '../types';
+import { NavSection, SchoolInfo, MemberUser, ParentUser, AdmissionRegistration, FeedbackSubmission } from '../types';
 import {
   getStoredRegistrations,
   exportRegistrationsToExcel,
@@ -53,8 +53,10 @@ interface NavbarProps {
   onOpenAdminFeedback?: () => void;
   onAdminLogout: () => void;
   currentMember: MemberUser | null;
+  currentParent?: ParentUser | null;
   onOpenMemberLogin: () => void;
   onMemberLogout: () => void;
+  onParentLogout?: () => void;
   onOpenAdmissionsSummary?: () => void;
 }
 
@@ -69,8 +71,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAdminFeedback,
   onAdminLogout,
   currentMember,
+  currentParent = null,
   onOpenMemberLogin,
   onMemberLogout,
+  onParentLogout,
   onOpenAdmissionsSummary,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -559,23 +563,49 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
-            {/* Member Login button - Always visible */}
+            {/* Member / Parent Authenticated Status - Always visible */}
             {currentMember ? (
               <div className="flex items-center bg-emerald-700/60 border border-emerald-500/40 text-emerald-100 px-2.5 py-0.5 rounded-full text-[11px]">
-                <User className="w-3.5 h-3.5 mr-1 text-emerald-300" />
-                <span className="max-w-[120px] truncate font-medium">
+                {currentMember.photoURL ? (
+                  <img
+                    src={currentMember.photoURL}
+                    alt={currentMember.name}
+                    className="w-3.5 h-3.5 rounded-full mr-1.5 object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <User className="w-3.5 h-3.5 mr-1 text-emerald-300" />
+                )}
+                <span className="max-w-[130px] truncate font-medium">
                   {currentMember.name || currentMember.email}
                 </span>
                 <button
+                  type="button"
                   onClick={onMemberLogout}
                   className="ml-2 text-emerald-300 hover:text-amber-300 cursor-pointer"
-                  title="Đăng xuất thành viên"
+                  title="Đăng xuất tài khoản Google"
+                >
+                  <LogOut className="w-3 h-3" />
+                </button>
+              </div>
+            ) : currentParent ? (
+              <div className="flex items-center bg-amber-400/20 border border-amber-400/50 text-amber-100 px-2.5 py-0.5 rounded-full text-[11px]">
+                <User className="w-3.5 h-3.5 mr-1 text-amber-300" />
+                <span className="max-w-[140px] truncate font-medium">
+                  PH: {currentParent.email}
+                </span>
+                <button
+                  type="button"
+                  onClick={onParentLogout || onMemberLogout}
+                  className="ml-2 text-amber-200 hover:text-white cursor-pointer"
+                  title="Đăng xuất tài khoản phụ huynh"
                 >
                   <LogOut className="w-3 h-3" />
                 </button>
               </div>
             ) : (
               <button
+                type="button"
                 onClick={onOpenMemberLogin}
                 className="inline-flex items-center bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-2.5 py-0.5 rounded-full text-[11px] transition-colors shadow-xs cursor-pointer"
               >
@@ -751,27 +781,40 @@ export const Navbar: React.FC<NavbarProps> = ({
           </nav>
 
           <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col space-y-2">
-            {!currentMember ? (
+            {currentMember ? (
+              <div className="flex items-center justify-between bg-emerald-50 p-2.5 rounded-lg text-xs text-emerald-900">
+                <span className="truncate">Google: {currentMember.email}</span>
+                <button
+                  type="button"
+                  onClick={onMemberLogout}
+                  className="text-red-600 font-semibold ml-2 underline cursor-pointer"
+                >
+                  Đăng xuất
+                </button>
+              </div>
+            ) : currentParent ? (
+              <div className="flex items-center justify-between bg-amber-50 p-2.5 rounded-lg text-xs text-amber-950">
+                <span className="truncate">Phụ huynh: {currentParent.email}</span>
+                <button
+                  type="button"
+                  onClick={onParentLogout || onMemberLogout}
+                  className="text-red-600 font-semibold ml-2 underline cursor-pointer"
+                >
+                  Đăng xuất
+                </button>
+              </div>
+            ) : (
               <button
+                type="button"
                 onClick={() => {
                   onOpenMemberLogin();
                   setMobileMenuOpen(false);
                 }}
-                className="w-full flex items-center justify-center space-x-2 bg-emerald-600 text-white py-2 rounded-lg text-sm font-semibold"
+                className="w-full flex items-center justify-center space-x-2 bg-emerald-600 text-white py-2 rounded-lg text-sm font-semibold cursor-pointer"
               >
                 <LogIn className="w-4 h-4" />
-                <span>Đăng nhập Gmail (Tải tài liệu)</span>
+                <span>Đăng nhập Google (Tải tài liệu)</span>
               </button>
-            ) : (
-              <div className="flex items-center justify-between bg-emerald-50 p-2.5 rounded-lg text-xs text-emerald-900">
-                <span className="truncate">Thành viên: {currentMember.email}</span>
-                <button
-                  onClick={onMemberLogout}
-                  className="text-red-600 font-semibold ml-2 underline"
-                >
-                  Thoát
-                </button>
-              </div>
             )}
           </div>
         </div>

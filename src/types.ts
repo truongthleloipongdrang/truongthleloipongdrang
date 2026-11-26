@@ -212,11 +212,48 @@ export interface StudentRecord {
   className: string; // Lớp (1A, 2B,...)
   campus?: StudentCampus | string; // Điểm trường: Trường chính, Phân hiệu 1, Phân hiệu 2
   academicYear: string;
+  semester?: string; // Học kỳ I / Học kỳ II / Cả năm
   academicEvaluation: 'Hoàn thành xuất sắc' | 'Hoàn thành tốt' | 'Hoàn thành' | 'Cần cố gắng';
   conductEvaluation: 'Tốt' | 'Đạt' | 'Cần rèn luyện thêm';
   teacherName: string;
   awards: string;
+  teacherComment?: string; // Nhận xét giáo viên
   // Tuyệt đối không lưu CCCD, ngày sinh đầy đủ, địa chỉ chi tiết công khai
+}
+
+export interface StudentResultRecord {
+  studentId: string;
+  studentCode: string;
+  fullName: string;
+  className: string;
+  campus: string;
+  teacherName: string;
+  academicEvaluation: StudentRecord['academicEvaluation'];
+  conductEvaluation: StudentRecord['conductEvaluation'];
+  awards: string;
+  teacherComment?: string;
+  academicYear: string;
+  semester: string;
+  updatedAt: string;
+}
+
+export interface ParentUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  provider: 'password' | 'google';
+  rememberSession: boolean;
+  loginAt: string;
+}
+
+export interface ParentLinkRecord {
+  parentUid: string;
+  parentEmail: string;
+  parentName?: string;
+  studentIds: string[];
+  studentCodes: string[];
+  updatedAt: string;
+  updatedBy?: string;
 }
 
 export interface GalleryItem {
@@ -231,7 +268,15 @@ export interface GalleryItem {
 export interface DocumentItem {
   id: string;
   title: string;
-  category: 'giao-an' | 'de-thi' | 'van-ban' | 'tap-huan' | 'stem' | 'hoc-sinh';
+  category:
+    | 'giao-an'
+    | 'de-thi'
+    | 'van-ban'
+    | 'tap-huan'
+    | 'stem'
+    | 'hoc-sinh'
+    | 'chuyen-de'
+    | 'ke-hoach';
   categoryLabel: string;
   fileSize: string;
   fileType: string;
@@ -243,11 +288,34 @@ export interface DocumentItem {
   downloadUrl: string;
 }
 
+export interface DocumentSubmission {
+  id: string;
+  title: string;
+  category: DocumentItem['category'];
+  categoryLabel: string;
+  description: string;
+  fileType: string;
+  fileSize: string;
+  downloadUrl: string;
+  submittedByUid: string;
+  submittedByEmail: string;
+  submittedByName: string;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+  updatedAt: string;
+  reviewNote?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+}
+
 export interface MemberUser {
   id: string;
+  uid?: string;
   email: string;
   name: string;
-  role: 'Giáo viên' | 'Phụ huynh' | 'Học sinh' | 'Cán bộ';
+  role: 'Thành viên' | 'Giáo viên' | 'Phụ huynh' | 'Học sinh' | 'Cán bộ' | string;
+  photoURL?: string;
+  provider?: 'google' | 'password';
   loginAt: string;
 }
 
