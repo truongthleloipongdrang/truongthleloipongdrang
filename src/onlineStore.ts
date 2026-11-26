@@ -160,7 +160,7 @@ async function checked(res: Response): Promise<any> {
  * hoặc claim boolean 'admin: true' (quy ước thành 'admin').
  * TUYỆT ĐỐI KHÔNG tự gán quyền dựa trên chuỗi email hay mã frontend.
  */
-function parseJwtRole(token: string): UserRole | null {
+function parseJwtPayload(token: string): Record<string, any> | null {
   try {
     const parts = token.split('.');
     if (parts.length < 2) return null;
@@ -171,16 +171,21 @@ function parseJwtRole(token: string): UserRole | null {
         .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
         .join('')
     );
-    const payload = JSON.parse(jsonStr);
-
-    if (payload.role && ['super_admin', 'admin', 'editor', 'viewer'].includes(payload.role)) {
-      return payload.role as UserRole;
-    }
-    if (payload.admin === true) {
-      return 'admin';
-    }
+    return JSON.parse(jsonStr);
   } catch {
-    // Bỏ qua lỗi giải mã
+    return null;
+  }
+}
+
+function parseJwtRole(token: string): UserRole | null {
+  const payload = parseJwtPayload(token);
+  if (!payload) return null;
+
+  if (payload.role && ['super_admin', 'admin', 'editor', 'viewer'].includes(payload.role)) {
+    return payload.role as UserRole;
+  }
+  if (payload.admin === true) {
+    return 'admin';
   }
   return null;
 }
@@ -404,18 +409,27 @@ export async function loginOnline(email: string, password: string): Promise<void
     role = await fetchUserRoleFromFirestore(conf.projectId, auth.localId, auth.idToken);
   }
 
-  // 3. Nếu là tài khoản email quản trị chính thức của trường (truongthleloipongdrang@gmail.com)
+  // 3. Nếu chưa có Custom Claims hoặc /userRoles/{uid}, chỉ chấp nhận email quản trị chính thức ĐÃ XÁC MINH (email_verified === true)
+  const jwtPayload = parseJwtPayload(auth.idToken);
+  const isEmailVerified = jwtPayload?.email_verified === true;
   const currentEmail = (auth.email || '').trim().toLowerCase();
   const officialAdminEmail = (conf.adminEmail || 'truongthleloipongdrang@gmail.com').trim().toLowerCase();
   if (!role && (currentEmail === 'truongthleloipongdrang@gmail.com' || currentEmail === officialAdminEmail)) {
-    role = 'admin';
+    if (isEmailVerified) {
+      role = 'admin';
+    } else {
+      throw new Error(
+        'Email quản trị chưa được xác minh (email_verified = false) và tài khoản chưa có vai trò trong /userRoles/{uid} hoặc Custom Claims. ' +
+        'Vui lòng xác minh email tài khoản hoặc tạo bản ghi /userRoles/{uid} với role: "admin" (hoặc "super_admin") trên Firebase Console.'
+      );
+    }
   }
 
   // 4. NGUYÊN TẮC BẢO MẬT: Từ chối truy cập nếu tài khoản không có bất kỳ vai trò hợp lệ nào
   if (!role) {
     throw new Error(
       'Tài khoản đăng nhập thành công nhưng CHƯA ĐƯỢC CẤP VAI TRÒ QUẢN TRỊ. ' +
-      'Vui lòng sử dụng email chính thức của trường (truongthleloipongdrang@gmail.com) hoặc gán Firebase Custom Claim (role: "admin" hoặc "super_admin") trên Firebase Console.'
+      'Vui lòng gán vai trò trong /userRoles/{uid}, Firebase Custom Claims, hoặc xác minh email quản trị chính thức của nhà trường.'
     );
   }
 
@@ -1198,8 +1212,8 @@ export function buildStudentResultRecord(student: StudentRecord): StudentResultR
     className: safeClass,
     campus: (student.campus || 'Trường chính').trim().slice(0, 80),
     teacherName: (student.teacherName || 'Giáo viên chủ nhiệm').trim().slice(0, 120),
-    academicEvaluation: student.academicEvaluation || 'Hoàn thành',
-    conductEvaluation: student.conductEvaluation || 'Đạt',
+    academicEvaluation: String(student.academicEvaluation || 'Hoàn thành').trim().slice(0, 60) as StudentRecord['academicEvaluation'],
+    conductEvaluation: String(student.conductEvaluation || 'Đạt').trim().slice(0, 60) as StudentRecord['conductEvaluation'],
     awards: (student.awards || '').trim().slice(0, 500),
     teacherComment: (student.teacherComment || '').trim().slice(0, 1000),
     academicYear: (student.academicYear || '2026 - 2027').trim().slice(0, 30),
@@ -1426,12 +1440,14 @@ export async function saveParentLinkForAdmin(input: {
 
   const parentUid = input.parentUid.trim();
   const parentEmail = input.parentEmail.trim();
-  const parentName = (input.parentName || '').trim();
+  const parentName = (input.parentName || '').trim().slice(0, 120);
   const uniqueIds = Array.from(new Set(input.studentIds.map((id) => id.trim()).filter(Boolean)));
-  const uniqueCodes = Array.from(new Set(input.studentCodes.map((c) => c.trim()).filter(Boolean)));
+  const uniqueCodes = Array.from(
+    new Set(input.studentCodes.map((c) => c.trim().slice(0, 40)).filter(Boolean))
+  ).slice(0, 10);
 
-  if (parentUid.length < 6 || parentUid.length > 128 || /[/\s]/.test(parentUid)) {
-    throw new Error('UID tài khoản phụ huynh không hợp lệ (lấy từ Firebase Console → Authentication → Users).');
+  if (!/^[a-zA-Z0-9_-]{6,128}$/.test(parentUid)) {
+    throw new Error('UID tài khoản phụ huynh không hợp lệ (chỉ gồm chữ, số, _, - từ 6–128 ký tự; lấy từ Firebase Console → Authentication → Users).');
   }
   if (!parentEmail.includes('@') || parentEmail.length < 5 || parentEmail.length > 120) {
     throw new Error('Email phụ huynh không hợp lệ.');
@@ -1449,8 +1465,8 @@ export async function saveParentLinkForAdmin(input: {
     parentName,
     studentIds: uniqueIds,
     studentCodes: uniqueCodes,
-    updatedAt: new Date().toISOString(),
-    updatedBy: session.email,
+    updatedAt: new Date().toISOString().slice(0, 40),
+    updatedBy: (session.email || '').trim().slice(0, 120),
   };
 
   const url = documentByIdEndpoint(conf.projectId, 'parentLinks', parentUid);
