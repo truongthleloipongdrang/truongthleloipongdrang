@@ -382,7 +382,12 @@ export async function fetchParentChildrenResults(parentUid: string): Promise<{
     return { link: null, children: [], missingIds: [] };
   }
   const linkRef = doc(db, 'parentLinks', parentUid);
-  const linkSnap = await getDoc(linkRef);
+  let linkSnap;
+  try {
+    linkSnap = await getDoc(linkRef);
+  } catch (error) {
+    throw new Error(mapFirebaseAuthError(error));
+  }
 
   if (!linkSnap.exists()) {
     return { link: null, children: [], missingIds: [] };
