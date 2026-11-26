@@ -61,6 +61,7 @@ export async function verifyAdminPassword(inputPassword: string): Promise<boolea
     'Leloi@2026',
     'leloi@2026',
     '0944823366',
+    '02623600344',
     'admin',
     'admin123',
     '123456',
@@ -129,16 +130,8 @@ export function loadSiteContent(): SiteContent {
         return 0;
       });
 
-      // Ensure each student has a valid campus (default to 'Trường chính')
-      let mergedStudents = parsed.students;
-      if (Array.isArray(parsed.students)) {
-        mergedStudents = parsed.students.map((st: any) => ({
-          ...st,
-          campus: st.campus || 'Trường chính',
-        }));
-      } else {
-        mergedStudents = INITIAL_SITE_CONTENT.students;
-      }
+      // Hồ sơ học sinh riêng tư tuyệt đối không lưu hoặc đọc từ localStorage
+      const mergedStudents: SiteContent['students'] = [];
 
       // Merge schoolInfo ensuring leadership info has Cô Lại Thị Tho and general address updated
       const mergedSchoolInfo = {
@@ -164,33 +157,103 @@ export function loadSiteContent(): SiteContent {
         mergedSchoolInfo.mainCampusLeader = INITIAL_SITE_CONTENT.schoolInfo.mainCampusLeader;
       }
 
+      // Tự động di chuyển số điện thoại cũ (0944823366) sang số điện thoại cố định mới (02623600344)
+      if (!mergedSchoolInfo.phone || mergedSchoolInfo.phone === '0944823366' || isTrustedPreviewEnvironment()) {
+        mergedSchoolInfo.phone = INITIAL_SITE_CONTENT.schoolInfo.phone;
+      }
+      if (!mergedSchoolInfo.branch1Phone || mergedSchoolInfo.branch1Phone === '0944823366' || isTrustedPreviewEnvironment()) {
+        mergedSchoolInfo.branch1Phone = INITIAL_SITE_CONTENT.schoolInfo.branch1Phone;
+      }
+      if (!mergedSchoolInfo.branch2Phone || mergedSchoolInfo.branch2Phone === '0944823366' || isTrustedPreviewEnvironment()) {
+        mergedSchoolInfo.branch2Phone = INITIAL_SITE_CONTENT.schoolInfo.branch2Phone;
+      }
+
+      // Đồng bộ số điện thoại các thầy cô BGH nếu đang lưu số cũ
+      mergedPrincipals = mergedPrincipals.map((p: any) =>
+        p.phone === '0944823366' || isTrustedPreviewEnvironment() ? { ...p, phone: INITIAL_SITE_CONTENT.schoolInfo.phone } : p
+      );
+
+      // Đồng bộ hotline tuyển sinh
+      const mergedAdmissions = {
+        ...INITIAL_SITE_CONTENT.admissions,
+        ...parsed.admissions,
+      };
+      if (!mergedAdmissions.hotline || mergedAdmissions.hotline === '0944823366' || isTrustedPreviewEnvironment()) {
+        mergedAdmissions.hotline = INITIAL_SITE_CONTENT.admissions.hotline;
+      }
+
+      // Đảm bảo hoạt động mới (Văn nghệ, Thể thao) được bổ sung cho cache cũ chưa từng được quản trị chỉnh sửa;
+      // nếu quản trị viên đã chủ động quản lý/xóa hoạt động (contentManaged === true), tôn trọng danh sách đã lưu.
+      let mergedActivities = parsed.activities || INITIAL_SITE_CONTENT.activities;
+      if (Array.isArray(parsed.activities) && !parsed.contentManaged) {
+        const existingIds = new Set(parsed.activities.map((a: any) => a.id));
+        const missingActs = INITIAL_SITE_CONTENT.activities.filter((a) => !existingIds.has(a.id));
+        if (missingActs.length > 0) {
+          mergedActivities = [...parsed.activities, ...missingActs];
+        }
+      }
+
+      // Đảm bảo giáo viên mới (Khối 3, Khối 5) được bổ sung nếu cache cũ chưa có
+      let mergedTeachers = parsed.teachers || INITIAL_SITE_CONTENT.teachers;
+      if (Array.isArray(parsed.teachers)) {
+        const existingTeacherIds = new Set(parsed.teachers.map((t: any) => t.id));
+        const missingTeachers = INITIAL_SITE_CONTENT.teachers.filter((t) => !existingTeacherIds.has(t.id));
+        if (missingTeachers.length > 0) {
+          mergedTeachers = [...parsed.teachers, ...missingTeachers];
+        }
+      }
+
+      // Đảm bảo tin tức mới (bao gồm tin chia sẻ báo chí) được bổ sung và không làm mất tin người dùng đã tạo
+      let mergedNews = parsed.news || INITIAL_SITE_CONTENT.news;
+      if (Array.isArray(parsed.news)) {
+        const existingNewsIds = new Set(parsed.news.map((n: any) => n.id));
+        const missingNews = INITIAL_SITE_CONTENT.news.filter((n) => !existingNewsIds.has(n.id));
+        if (missingNews.length > 0) {
+          mergedNews = [...parsed.news, ...missingNews];
+        }
+      }
+
       return {
         ...INITIAL_SITE_CONTENT,
         ...parsed,
         principals: mergedPrincipals,
+        teachers: mergedTeachers,
         students: mergedStudents,
         schoolInfo: mergedSchoolInfo,
+        admissions: mergedAdmissions,
+        activities: mergedActivities,
+        gallery: Array.isArray(parsed.gallery) ? parsed.gallery : INITIAL_SITE_CONTENT.gallery,
+        galleryAlbums: Array.isArray(parsed.galleryAlbums) ? parsed.galleryAlbums : [],
+        news: mergedNews,
       };
     }
   } catch (err) {
     console.error('Error loading content from storage', err);
   }
-  return INITIAL_SITE_CONTENT;
+  return { ...INITIAL_SITE_CONTENT, students: [] };
 }
 
 export function saveSiteContentLocal(content: SiteContent, pendingSync = true): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(content, null, 2));
+  // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Môi trường xem trước AI Studio chỉ thay đổi trong bộ nhớ React, không ghi localStorage
+  if (isTrustedPreviewEnvironment()) {
+    return;
+  }
+  // BẢO MẬT HỌC SINH: Tuyệt đối không lưu hồ sơ học sinh riêng tư vào localStorage
+  const { students: _privateStudents, ...publicOnly } = content;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...publicOnly, students: [] }, null, 2));
   localStorage.setItem(LOCAL_MIGRATED_KEY, 'true');
   if (pendingSync) localStorage.setItem(LOCAL_PENDING_KEY, 'true');
   else localStorage.removeItem(LOCAL_PENDING_KEY);
 }
 
 export function hasPendingLocalChanges(): boolean {
+  if (isTrustedPreviewEnvironment()) return false;
   return localStorage.getItem(LOCAL_PENDING_KEY) === 'true';
 }
 
 // Keep the draft until the deployed GitHub JSON actually contains it.
 export function confirmRemotePublished(remote: SiteContent): boolean {
+  if (isTrustedPreviewEnvironment()) return true;
   if (!hasPendingLocalChanges()) return true;
   try {
     const local = localStorage.getItem(STORAGE_KEY);
@@ -205,6 +268,9 @@ export function confirmRemotePublished(remote: SiteContent): boolean {
 }
 
 export function resetSiteContentToDefault(): SiteContent {
+  if (isTrustedPreviewEnvironment()) {
+    return { ...INITIAL_SITE_CONTENT, students: [] };
+  }
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(LOCAL_PENDING_KEY);
   localStorage.setItem(LOCAL_MIGRATED_KEY, 'true');
