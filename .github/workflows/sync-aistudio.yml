@@ -97,7 +97,7 @@ jobs:
             "${AUTH_CORE_EXCLUDES[@]}" \
             aistudio-source/src/ src/
 
-          # Xac minh day du cac tep quan ly noi dung bat buoc da co mat trong website chinh
+          # Xac minh day du cac tep quan ly noi dung & phan quyen RBAC bat buoc da co mat trong website chinh
           REQUIRED_CONTENT_FILES=(
             src/components/AdminGalleryManager.tsx
             src/components/AdminActivitiesManager.tsx
@@ -105,17 +105,44 @@ jobs:
             src/components/AdminModal.tsx
             src/components/ActivitiesSection.tsx
             src/components/GallerySection.tsx
+            src/components/AdminAccountsPermissionsManager.tsx
+            src/components/AdminEditorialLogsPanel.tsx
+            src/components/TeacherContentModal.tsx
             src/siteContentSync.ts
+            src/rbacTypes.ts
+            src/rbacStore.ts
             src/types.ts
             src/mediaHelpers.ts
             src/App.tsx
           )
           for req in "${REQUIRED_CONTENT_FILES[@]}"; do
             if [ ! -f "$req" ]; then
-              echo "::error::Thieu tep quan ly noi dung bat buoc sau khi dong bo: $req"
+              echo "::error::Thieu tep quan ly noi dung / phan quyen bat buoc sau khi dong bo: $req"
               exit 1
             fi
           done
+
+          # Xac minh chuc nang dang nhap phu huynh, parentLinks/studentResults va 19 hoc sinh khong bi mat
+          grep -q "signInParentWithEmailPassword" src/firebaseAuthStore.ts || {
+            echo "::error::Thieu signInParentWithEmailPassword trong src/firebaseAuthStore.ts"
+            exit 1
+          }
+          grep -q "fetchParentChildrenResults" src/firebaseAuthStore.ts || {
+            echo "::error::Thieu fetchParentChildrenResults trong src/firebaseAuthStore.ts"
+            exit 1
+          }
+          grep -q "loadPrivateStudents" src/onlineStore.ts || {
+            echo "::error::Thieu loadPrivateStudents trong src/onlineStore.ts"
+            exit 1
+          }
+          grep -q "savePrivateStudents" src/onlineStore.ts || {
+            echo "::error::Thieu savePrivateStudents trong src/onlineStore.ts"
+            exit 1
+          }
+          grep -q "migratePrivateStudentsToStudentResults" src/onlineStore.ts || {
+            echo "::error::Thieu migratePrivateStudentsToStudentResults trong src/onlineStore.ts"
+            exit 1
+          }
 
           CHANGED_LIST=$(git status --short -- src/)
           CHANGED_COUNT=$(printf '%s\n' "$CHANGED_LIST" | sed '/^$/d' | wc -l | tr -d ' ')
@@ -124,6 +151,8 @@ jobs:
 
           {
             echo "changed_count=$CHANGED_COUNT"
+            echo "include_content_mgmt=$INCLUDE_CONTENT_MGMT"
+            echo "include_auth_core=$INCLUDE_AUTH_CORE"
             echo "changed_files<<EOF"
             if [ -n "$CHANGED_LIST" ]; then
               echo "$CHANGED_LIST"
@@ -170,19 +199,33 @@ jobs:
           NODE
 
       - name: Kiem tra file duoc bao ve
+        id: protected_check
         run: |
+          DIFF_PROTECTED=""
           for file in data.ts admissionsStorage.ts feedbackStorage.ts geminiConfig.ts onlineStore.ts firebaseAuthStore.ts studentExcelHelper.ts components/MemberLoginModal.tsx components/StudentLookupSection.tsx
           do
             if ! diff -q "aistudio-source/src/$file" "src/$file" > /dev/null 2>&1; then
               echo "::warning::Tep duoc bao ve co su khac biet (can kiem tra thu cong neu muon cap nhat): src/$file"
+              DIFF_PROTECTED="${DIFF_PROTECTED}- src/${file}\n"
             fi
           done
 
           if [ -f aistudio-source/firestore.rules ]; then
             if ! cmp -s aistudio-source/firestore.rules firestore.rules; then
               echo "::warning::firestore.rules khac nhau. Can kiem tra va phe duyet rieng (khong tu dong ghi de hay trien khai)."
+              DIFF_PROTECTED="${DIFF_PROTECTED}- firestore.rules (luon kiem tra va Publish thu cong tren Firebase Console)\n"
             fi
           fi
+
+          {
+            echo "diff_protected<<EOF"
+            if [ -n "$DIFF_PROTECTED" ]; then
+              printf '%b' "$DIFF_PROTECTED"
+            else
+              echo "- (Khong co sai khac nao voi nhom tep duoc bao ve)"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: bun install
@@ -207,24 +250,30 @@ jobs:
           base: main
           add-paths: src
           delete-branch: true
-          commit-message: "Sync AI Studio content management and safe UI changes"
-          title: "Cap nhat website tu Google AI Studio (Quan ly noi dung & giao dien)"
+          commit-message: "Sync AI Studio content management, RBAC and safe UI changes"
+          title: "Cap nhat website tu Google AI Studio (Quan ly noi dung, phan quyen & giao dien)"
           body: |
             Dong bo ma nguon tu kho AI Studio Private.
 
-            Da kiem tra thu vien, TypeScript (`npx tsc --noEmit`) va Build (`npm run build`) truoc khi tao PR.
+            - `include_content_management_files`: `${{ steps.sync_files.outputs.include_content_mgmt }}`
+            - `include_auth_core_files`: `${{ steps.sync_files.outputs.include_auth_core }}`
+
+            Da kiem tra thu vien, tinh toan ven dang nhap phu huynh / 19 hoc sinh, TypeScript (`npx tsc --noEmit`) va Build (`npm run build`) truoc khi tao PR.
 
             ### Danh sach tep thay doi (${{ steps.sync_files.outputs.changed_count }} tep)
             ```
             ${{ steps.sync_files.outputs.changed_files }}
             ```
 
-            ### Cac tep luon duoc bao ve (khong tu dong ghi de):
+            ### Tep duoc bao ve dang co sai khac giua hai kho (khong tu dong ghi de):
+            ${{ steps.protected_check.outputs.diff_protected }}
+
+            ### Cac tep luon duoc bao ve mac dinh:
             - Cau hinh trien khai GitHub (`.github/workflows/*`)
             - Firestore Security Rules (`firestore.rules`)
             - Du lieu goc & luu tru rieng (`data.ts`, `admissionsStorage.ts`, `feedbackStorage.ts`, `geminiConfig.ts`)
             - File cau hinh nhay cam (`.env*`)
-            - Nhom xac thuc & 19 hoc sinh (`onlineStore.ts`, `firebaseAuthStore.ts`, `studentExcelHelper.ts`, `MemberLoginModal.tsx`, `StudentLookupSection.tsx` - chi mo khi bat `include_auth_core_files=true`)
+            - Nhom xac thuc & 19 hoc sinh (`onlineStore.ts`, `firebaseAuthStore.ts`, `studentExcelHelper.ts`, `MemberLoginModal.tsx`, `StudentLookupSection.tsx` - chi mo khi chon thu cong `include_auth_core_files=true`)
 
-            Can xem tab **Files changed** va kiem tra giao dien truoc khi Merge.
-            PR nay khong tu dong Merge.
+            Can xem ky tab **Files changed** va kiem tra giao dien truoc khi Merge.
+            PR nay khong tu dong Merge va khong trien khai `firestore.rules`.
