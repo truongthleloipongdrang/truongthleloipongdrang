@@ -111,6 +111,9 @@ export interface NewsItem {
   isExternalLink?: boolean;
   externalUrl?: string;
   sourceName?: string;
+  authorUid?: string;
+  authorEmail?: string;
+  status?: 'published' | 'draft';
 }
 
 export interface ActivityItem {
@@ -134,6 +137,9 @@ export interface ActivityItem {
   videoUrl?: string;
   highlight?: boolean;
   order?: number;
+  authorUid?: string;
+  authorEmail?: string;
+  status?: 'published' | 'draft';
 }
 
 export interface AdmissionStep {
@@ -269,6 +275,9 @@ export interface GalleryItem {
   caption: string;
   date: string;
   order?: number;
+  authorUid?: string;
+  authorEmail?: string;
+  status?: 'published' | 'draft';
 }
 
 export interface GalleryAlbumPhoto {
@@ -289,6 +298,9 @@ export interface GalleryAlbum {
   coverImageUrl: string;
   photos: GalleryAlbumPhoto[];
   order?: number;
+  authorUid?: string;
+  authorEmail?: string;
+  status?: 'published' | 'draft';
 }
 
 export type AdminTabKey =
@@ -299,6 +311,8 @@ export type AdminTabKey =
   | 'gallery'
   | 'students'
   | 'documents'
+  | 'accounts_permissions'
+  | 'editorial_logs'
   | 'members'
   | 'admissions_registrations'
   | 'feedback'
@@ -326,6 +340,9 @@ export interface DocumentItem {
   downloadCount: number;
   description: string;
   downloadUrl: string;
+  authorUid?: string;
+  authorEmail?: string;
+  status?: 'published' | 'draft';
 }
 
 export interface DocumentSubmission {

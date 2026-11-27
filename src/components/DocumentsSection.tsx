@@ -1,39 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   FileText,
   Download,
-  Upload,
   Lock,
   Search,
   CheckCircle2,
   UserCheck,
   Calendar,
   FileType,
-  X,
   ExternalLink,
   AlertCircle,
-  Clock,
-  ShieldCheck,
-  Loader2,
-  Link as LinkIcon,
+  Plus,
 } from 'lucide-react';
 import {
   DocumentItem,
-  DocumentSubmission,
   EditableCardPayload,
   MemberUser,
 } from '../types';
-import {
-  validateDocumentUrl,
-  validateDocumentSubmissionInput,
-  ALLOWED_DOCUMENT_FILE_TYPES,
-} from '../urlValidation';
-import {
-  submitDocumentForReview,
-  fetchMyDocumentSubmissions,
-  isFirebaseSdkReady,
-} from '../firebaseAuthStore';
-import { isTrustedPreviewEnvironment } from '../authEnvironment';
+import { validateDocumentUrl } from '../urlValidation';
 
 interface DocumentsSectionProps {
   documents: DocumentItem[];
@@ -42,8 +26,8 @@ interface DocumentsSectionProps {
   currentMember: MemberUser | null;
   onOpenMemberLogin: () => void;
   onIncrementDownload: (docId: string) => void;
-  /** Giữ tương thích ngược với App.tsx cũ khi đồng bộ từng phần; tài liệu gửi lên luôn đi qua hàng đợi kiểm duyệt Firestore */
-  onUploadDocument?: (doc: DocumentItem) => void;
+  canPublishDocuments?: boolean;
+  onOpenDocumentPublisher?: () => void;
 }
 
 export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
@@ -53,29 +37,15 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
   currentMember,
   onOpenMemberLogin,
   onIncrementDownload,
+  canPublishDocuments = false,
+  onOpenDocumentPublisher,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [showUploadModal, setShowUploadModal] = useState(false);
   const [noticeToast, setNoticeToast] = useState<{
     type: 'success' | 'error';
     text: string;
   } | null>(null);
-
-  // Submission form state (chỉ gửi liên kết học liệu chờ duyệt — phù hợp Firebase Spark miễn phí)
-  const [uploadTitle, setUploadTitle] = useState('');
-  const [uploadCategory, setUploadCategory] =
-    useState<DocumentItem['category']>('giao-an');
-  const [uploadDesc, setUploadDesc] = useState('');
-  const [uploadFileType, setUploadFileType] = useState<string>('PDF');
-  const [uploadFileSize, setUploadFileSize] = useState('Liên kết trực tuyến');
-  const [uploadUrl, setUploadUrl] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState('');
-
-  // Member's own pending/reviewed submissions
-  const [mySubmissions, setMySubmissions] = useState<DocumentSubmission[]>([]);
-  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
 
   const showToast = (type: 'success' | 'error', text: string) => {
     setNoticeToast({ type, text });
@@ -83,24 +53,6 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
       setNoticeToast((prev) => (prev?.text === text ? null : prev));
     }, 4500);
   };
-
-  const loadMySubmissions = useCallback(async () => {
-    if (!currentMember?.uid || !isFirebaseSdkReady()) {
-      setMySubmissions([]);
-      return;
-    }
-    setLoadingSubmissions(true);
-    try {
-      const list = await fetchMyDocumentSubmissions(currentMember.uid);
-      setMySubmissions(list);
-    } finally {
-      setLoadingSubmissions(false);
-    }
-  }, [currentMember?.uid]);
-
-  useEffect(() => {
-    void loadMySubmissions();
-  }, [loadMySubmissions]);
 
   const categories = [
     { id: 'all', label: 'Tất cả' },
@@ -125,11 +77,15 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
   });
 
   const canAccessDownloads = Boolean(currentMember || isAdmin);
+  const showDirectPublishButton = Boolean(
+    (canPublishDocuments || isAdmin) && onOpenDocumentPublisher
+  );
 
   const handleUnavailableClick = (reason?: string) => {
     showToast(
       'error',
-      reason || 'Tài liệu chưa có tệp đính kèm. Vui lòng quay lại sau khi nhà trường cập nhật đường dẫn.'
+      reason ||
+        'Tài liệu chưa có tệp đính kèm. Vui lòng quay lại sau khi nhà trường cập nhật đường dẫn.'
     );
   };
 
@@ -143,7 +99,6 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
       'success',
       `Đang mở tài liệu "${docItem.title}" từ liên kết chính thức.`
     );
-    // Sử dụng thẻ <a> đã có href hợp lệ khi bấm nút mở trực tiếp (hoặc tạo thẻ <a> tạm an toàn)
     const link = document.createElement('a');
     link.href = normalizedUrl;
     link.target = '_blank';
@@ -151,67 +106,6 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const handleSubmissionSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitError('');
-
-    if (!currentMember) {
-      onOpenMemberLogin();
-      return;
-    }
-
-    const validation = validateDocumentSubmissionInput({
-      title: uploadTitle,
-      category: uploadCategory,
-      description: uploadDesc,
-      fileType: uploadFileType,
-      fileSize: uploadFileSize,
-      downloadUrl: uploadUrl,
-    });
-
-    if (!validation.valid) {
-      setSubmitError(validation.error);
-      return;
-    }
-
-    if (isTrustedPreviewEnvironment()) {
-      setSubmitError(
-        'Môi trường xem trước AI Studio được cách ly khỏi Firebase Production. Chức năng gửi học liệu chờ duyệt hoạt động trên website chính thức.'
-      );
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const created = await submitDocumentForReview({
-        title: uploadTitle,
-        category: uploadCategory,
-        description: uploadDesc,
-        fileType: uploadFileType,
-        fileSize: uploadFileSize,
-        downloadUrl: uploadUrl,
-      });
-
-      setMySubmissions((prev) => [created, ...prev]);
-      setShowUploadModal(false);
-      setUploadTitle('');
-      setUploadDesc('');
-      setUploadUrl('');
-      setUploadFileType('PDF');
-      setUploadFileSize('Liên kết trực tuyến');
-      showToast(
-        'success',
-        `Đã gửi học liệu "${created.title}" lên hệ thống! Học liệu đang ở trạng thái "Chờ quản trị viên duyệt" trước khi hiển thị công khai.`
-      );
-    } catch (err: any) {
-      setSubmitError(
-        err?.message || 'Không thể gửi đóng góp học liệu lên Firebase. Vui lòng thử lại.'
-      );
-    } finally {
-      setSubmitting(false);
-    }
   };
 
   return (
@@ -225,15 +119,15 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
           Tài Liệu Dạy Học, Giáo Án &amp; Văn Bản
         </h1>
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
-          Ngân hàng giáo án GDPT 2018, đề kiểm tra định kỳ, tài liệu ôn luyện tiểu học và công văn giáo dục được nhà trường kiểm duyệt.
+          Ngân hàng giáo án GDPT 2018, đề kiểm tra định kỳ, tài liệu ôn luyện tiểu học và công văn giáo dục được đội ngũ giáo viên &amp; nhà trường biên soạn, xuất bản trực tiếp.
         </p>
       </div>
 
-      {/* Member Status & Contribution Bar */}
+      {/* Member Status & Direct Publishing Bar */}
       <div className="bg-gradient-to-r from-emerald-900 via-emerald-800 to-teal-900 rounded-3xl p-6 sm:p-7 text-white flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl">
         <div className="flex items-start space-x-3">
           <div className="w-11 h-11 rounded-2xl bg-amber-400/20 border border-amber-400/40 flex items-center justify-center shrink-0">
-            {currentMember ? (
+            {currentMember || isAdmin ? (
               <UserCheck className="w-6 h-6 text-amber-300" />
             ) : (
               <Lock className="w-6 h-6 text-amber-300" />
@@ -247,16 +141,28 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
                 </h3>
                 <p className="text-xs text-emerald-200 mt-0.5">
                   Tài khoản Google đã xác thực:{' '}
-                  <strong>{currentMember.email}</strong>. Bạn có thể mở/tải các tài liệu có đường dẫn thật và gửi đóng góp học liệu chờ duyệt.
+                  <strong>{currentMember.email}</strong>.{' '}
+                  {canPublishDocuments
+                    ? 'Tài khoản của thầy/cô đã được phân quyền đăng và quản lý tài liệu trực tiếp vào Kho Học Liệu.'
+                    : 'Bạn có thể mở và tải các tài liệu công khai có đường dẫn thật trong Kho Tài Liệu.'}
+                </p>
+              </>
+            ) : isAdmin ? (
+              <>
+                <h3 className="font-bold text-base text-white">
+                  Chế độ Quản trị Kho Tài Liệu đang bật
+                </h3>
+                <p className="text-xs text-emerald-200 mt-0.5">
+                  Quản trị viên có thể thêm, sửa, xóa và xuất bản tài liệu trực tiếp cho giáo viên, phụ huynh và học sinh tải về.
                 </p>
               </>
             ) : (
               <>
                 <h3 className="font-bold text-base text-white">
-                  Đăng nhập thành viên bằng Google để tải &amp; đóng góp tài liệu
+                  Đăng nhập thành viên bằng Google để mở &amp; tải tài liệu
                 </h3>
                 <p className="text-xs text-emerald-200 mt-0.5">
-                  Khách vãng lai vẫn xem được danh mục và mô tả tài liệu. Vui lòng đăng nhập bằng tài khoản Google để mở đường dẫn tải về hoặc gửi đề xuất học liệu.
+                  Khách vãng lai vẫn xem được danh mục và mô tả tài liệu. Vui lòng đăng nhập bằng tài khoản Google để mở đường dẫn tải về.
                 </p>
               </>
             )}
@@ -264,19 +170,16 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
         </div>
 
         <div className="flex items-center space-x-3 shrink-0">
-          {currentMember ? (
+          {showDirectPublishButton ? (
             <button
               type="button"
-              onClick={() => {
-                setSubmitError('');
-                setShowUploadModal(true);
-              }}
+              onClick={onOpenDocumentPublisher}
               className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-5 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center space-x-2 cursor-pointer"
             >
-              <Upload className="w-4 h-4" />
-              <span>Đóng Góp Học Liệu</span>
+              <Plus className="w-4 h-4" />
+              <span>Đăng Tài Liệu Trực Tiếp</span>
             </button>
-          ) : (
+          ) : !currentMember && !isAdmin ? (
             <button
               type="button"
               onClick={onOpenMemberLogin}
@@ -285,7 +188,7 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
               <Lock className="w-4 h-4" />
               <span>Đăng Nhập Bằng Google</span>
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -304,66 +207,6 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
             <AlertCircle className="w-4 h-4 text-amber-300 shrink-0" />
           )}
           <span className="leading-snug">{noticeToast.text}</span>
-        </div>
-      )}
-
-      {/* Member's Own Submissions Status Box */}
-      {currentMember && (loadingSubmissions || mySubmissions.length > 0) && (
-        <div className="bg-white border border-emerald-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-            <div className="flex items-center space-x-2">
-              <Clock className="w-4 h-4 text-emerald-700" />
-              <h3 className="text-sm font-extrabold text-slate-900">
-                Học Liệu Bạn Đã Gửi Chờ Kiểm Duyệt ({mySubmissions.length})
-              </h3>
-            </div>
-            <span className="text-[11px] text-slate-500">
-              Chỉ hiển thị công khai sau khi Quản trị viên nhà trường phê duyệt
-            </span>
-          </div>
-
-          {loadingSubmissions ? (
-            <div className="py-3 text-xs text-slate-500 flex items-center space-x-2">
-              <Loader2 className="w-4 h-4 animate-spin text-emerald-700" />
-              <span>Đang tải danh sách học liệu bạn đã gửi...</span>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {mySubmissions.map((sub) => (
-                <div
-                  key={sub.id}
-                  className="p-3 rounded-xl border border-slate-200 bg-slate-50/70 space-y-1.5 text-xs"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="font-bold text-slate-900 line-clamp-1">
-                      {sub.title}
-                    </span>
-                    <span
-                      className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        sub.status === 'approved'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : sub.status === 'rejected'
-                          ? 'bg-red-100 text-red-800'
-                          : 'bg-amber-100 text-amber-900'
-                      }`}
-                    >
-                      {sub.status === 'approved'
-                        ? 'Đã duyệt xuất bản'
-                        : sub.status === 'rejected'
-                        ? 'Chưa được duyệt'
-                        : 'Chờ duyệt'}
-                    </span>
-                  </div>
-                  <p className="text-slate-600 line-clamp-2">{sub.description}</p>
-                  {sub.reviewNote && (
-                    <p className="text-[11px] text-slate-700 bg-white border border-slate-200 rounded-lg px-2 py-1">
-                      <strong>Phản hồi nhà trường:</strong> {sub.reviewNote}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
@@ -527,184 +370,6 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
           );
         })}
       </div>
-
-      {/* Contribution Modal (Link-only moderated submission for Firebase Spark Free Tier) */}
-      {showUploadModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-emerald-200 overflow-hidden max-h-[90vh] flex flex-col">
-            <div className="bg-emerald-800 p-4 text-white flex justify-between items-center">
-              <div className="flex items-center space-x-2">
-                <Upload className="w-5 h-5 text-amber-300" />
-                <div>
-                  <h3 className="font-bold text-base leading-tight">
-                    Đóng Góp Học Liệu (Gửi Chờ Duyệt)
-                  </h3>
-                  <p className="text-[11px] text-emerald-200">
-                    Chia sẻ đường dẫn học liệu hợp lệ để nhà trường kiểm duyệt
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowUploadModal(false)}
-                className="text-emerald-200 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form
-              onSubmit={handleSubmissionSubmit}
-              className="p-6 space-y-4 overflow-y-auto"
-            >
-              {/* Honest Firebase Spark Free Tier explanation */}
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 flex items-start space-x-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                <p className="leading-relaxed">
-                  Để tối ưu vận hành miễn phí và bảo mật an toàn trên nền tảng trường học, chức năng này tiếp nhận <strong>đường dẫn chia sẻ tài liệu</strong> (Google Drive, OneDrive, PDF trực tuyến...) có tiền tố <code className="bg-white px-1 rounded font-mono">https://</code>. Đề xuất của bạn sẽ được lưu ở trạng thái <strong>Chờ quản trị viên duyệt</strong> trước khi xuất bản.
-                </p>
-              </div>
-
-              {submitError && (
-                <div className="bg-red-50 border border-red-200 text-red-800 text-xs p-3 rounded-xl flex items-start space-x-2">
-                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                  <span className="font-medium leading-relaxed">{submitError}</span>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Tên tài liệu / Học liệu *
-                </label>
-                <input
-                  type="text"
-                  required
-                  minLength={5}
-                  maxLength={200}
-                  value={uploadTitle}
-                  onChange={(e) => setUploadTitle(e.target.value)}
-                  placeholder="Ví dụ: Bộ đề ôn tập Toán lớp 4 học kỳ II..."
-                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:outline-emerald-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Đường dẫn chia sẻ tài liệu (https://...) *
-                </label>
-                <div className="relative">
-                  <input
-                    type="url"
-                    required
-                    value={uploadUrl}
-                    onChange={(e) => setUploadUrl(e.target.value)}
-                    placeholder="https://drive.google.com/file/d/.../view"
-                    className="w-full border border-slate-300 rounded-xl pl-9 pr-3.5 py-2 text-sm font-mono focus:outline-emerald-600"
-                  />
-                  <LinkIcon className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                </div>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Lưu ý: Với Google Drive, vui lòng bật quyền <em>&quot;Bất kỳ ai có đường liên kết đều có thể xem&quot;</em>.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    Chuyên mục
-                  </label>
-                  <select
-                    value={uploadCategory}
-                    onChange={(e) =>
-                      setUploadCategory(e.target.value as DocumentItem['category'])
-                    }
-                    className="w-full border border-slate-300 rounded-xl px-2.5 py-2 text-xs bg-white"
-                  >
-                    <option value="giao-an">Giáo Án &amp; Phân Phối</option>
-                    <option value="de-thi">Đề Thi &amp; Đáp Án</option>
-                    <option value="van-ban">Thông Tư &amp; Văn Bản</option>
-                    <option value="tap-huan">Tài Liệu Tập Huấn</option>
-                    <option value="stem">Bài Giảng STEM</option>
-                    <option value="hoc-sinh">Học Sinh Ôn Luyện</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    Định dạng
-                  </label>
-                  <select
-                    value={uploadFileType}
-                    onChange={(e) => setUploadFileType(e.target.value)}
-                    className="w-full border border-slate-300 rounded-xl px-2.5 py-2 text-xs bg-white"
-                  >
-                    {ALLOWED_DOCUMENT_FILE_TYPES.map((ft) => (
-                      <option key={ft} value={ft}>
-                        {ft}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    Dung lượng (ước tính)
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={30}
-                    value={uploadFileSize}
-                    onChange={(e) => setUploadFileSize(e.target.value)}
-                    placeholder="Ví dụ: 2.5 MB"
-                    className="w-full border border-slate-300 rounded-xl px-2.5 py-2 text-xs"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Mô tả ngắn gọn nội dung *
-                </label>
-                <textarea
-                  rows={3}
-                  required
-                  minLength={5}
-                  maxLength={1000}
-                  value={uploadDesc}
-                  onChange={(e) => setUploadDesc(e.target.value)}
-                  placeholder="Nêu rõ khối lớp, môn học và nội dung chính của tài liệu..."
-                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:outline-emerald-600"
-                />
-              </div>
-
-              <div className="flex justify-end space-x-2 pt-2">
-                <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={() => setShowUploadModal(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
-                >
-                  Hủy bỏ
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow flex items-center space-x-1.5 disabled:opacity-60 cursor-pointer"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Đang gửi lên Firebase...</span>
-                    </>
-                  ) : (
-                    <span>Gửi Quản Trị Viên Duyệt</span>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
