@@ -25,8 +25,10 @@ import {
   Trash2,
   MessageSquareText,
   Lock,
+  PenSquare,
 } from 'lucide-react';
 import { NavSection, SchoolInfo, MemberUser, ParentUser, AdmissionRegistration, FeedbackSubmission } from '../types';
+import { UserRoleRecord, hasAnyEditorialPermission, isAdminOrSuperAdminRecord } from '../rbacTypes';
 import {
   getStoredRegistrations,
   exportRegistrationsToExcel,
@@ -58,6 +60,8 @@ interface NavbarProps {
   onMemberLogout: () => void;
   onParentLogout?: () => void;
   onOpenAdmissionsSummary?: () => void;
+  currentUserRole?: UserRoleRecord | null;
+  onOpenTeacherWorkspace?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -76,7 +80,17 @@ export const Navbar: React.FC<NavbarProps> = ({
   onMemberLogout,
   onParentLogout,
   onOpenAdmissionsSummary,
+  currentUserRole = null,
+  onOpenTeacherWorkspace,
 }) => {
+  const canOpenTeacherWorkspace = Boolean(
+    currentMember &&
+      onOpenTeacherWorkspace &&
+      hasAnyEditorialPermission(currentUserRole)
+  );
+  const canOpenSuperAdminFromGoogle = Boolean(
+    currentMember && !isAdmin && isAdminOrSuperAdminRecord(currentUserRole)
+  );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showNotificationMenu, setShowNotificationMenu] = useState(false);
@@ -563,6 +577,31 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
+            {/* Teacher Direct-Publishing Content Button (shown ONLY when granted active RBAC permissions) */}
+            {canOpenTeacherWorkspace && (
+              <button
+                type="button"
+                onClick={onOpenTeacherWorkspace}
+                className="inline-flex items-center space-x-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-2.5 py-0.5 rounded-full text-[11px] shadow-xs transition-colors cursor-pointer"
+                title="Mở không gian quản lý nội dung theo các mục đã được cấp quyền"
+              >
+                <PenSquare className="w-3 h-3" />
+                <span>Quản lý nội dung</span>
+              </button>
+            )}
+
+            {canOpenSuperAdminFromGoogle && (
+              <button
+                type="button"
+                onClick={onOpenAdmin}
+                className="inline-flex items-center space-x-1 bg-purple-500 hover:bg-purple-400 text-white font-bold px-2.5 py-0.5 rounded-full text-[11px] shadow-xs transition-colors cursor-pointer"
+                title="Mở Bảng Quản Trị dành cho tài khoản quản trị"
+              >
+                <ShieldCheck className="w-3 h-3" />
+                <span>Quản trị</span>
+              </button>
+            )}
+
             {/* Member / Parent Authenticated Status - Always visible */}
             {currentMember ? (
               <div className="flex items-center bg-emerald-700/60 border border-emerald-500/40 text-emerald-100 px-2.5 py-0.5 rounded-full text-[11px]">
@@ -797,6 +836,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           </nav>
 
           <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col space-y-2">
+            {canOpenTeacherWorkspace && (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenTeacherWorkspace?.();
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full flex items-center justify-center space-x-2 bg-amber-400 hover:bg-amber-300 text-slate-950 py-2 rounded-lg text-sm font-black cursor-pointer"
+              >
+                <PenSquare className="w-4 h-4" />
+                <span>Quản lý nội dung (Giáo viên)</span>
+              </button>
+            )}
             {currentMember ? (
               <div className="flex items-center justify-between bg-emerald-50 p-2.5 rounded-lg text-xs text-emerald-900">
                 <span className="truncate">Google: {currentMember.email}</span>

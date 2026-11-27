@@ -190,30 +190,48 @@ function parseJwtRole(token: string): UserRole | null {
   return null;
 }
 
+interface FirestoreRoleLookupResult {
+  exists: boolean;
+  enabled: boolean;
+  role: UserRole | null;
+}
+
 /**
- * Kiểm tra phân quyền trong collection /userRoles/{uid} trên Firestore
- * khi tài khoản chưa được thiết lập Custom Claims trực tiếp trên token.
+ * Kiểm tra phân quyền trong collection /userRoles/{uid} trên Firestore.
+ * Khi bản ghi tồn tại, nó là nguồn sự thật ưu tiên (kể cả khi enabled === false hoặc bị hạ vai trò).
  */
 async function fetchUserRoleFromFirestore(
   projectId: string,
   uid: string,
   idToken: string
-): Promise<UserRole | null> {
+): Promise<FirestoreRoleLookupResult> {
   try {
     const url = documentByIdEndpoint(projectId, 'userRoles', uid);
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${idToken}` },
+      cache: 'no-store',
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const role = data?.fields?.role?.stringValue;
-    if (role && ['super_admin', 'admin', 'editor', 'viewer'].includes(role)) {
-      return role as UserRole;
+    if (res.status === 404) {
+      return { exists: false, enabled: true, role: null };
     }
+    if (!res.ok) {
+      return { exists: false, enabled: true, role: null };
+    }
+    const data = await res.json();
+    const enabled = data?.fields?.enabled?.booleanValue !== false;
+    const roleStr = data?.fields?.role?.stringValue;
+    const validRole: UserRole | null =
+      roleStr && ['super_admin', 'admin', 'editor', 'viewer'].includes(roleStr)
+        ? (roleStr as UserRole)
+        : null;
+    return {
+      exists: true,
+      enabled,
+      role: enabled ? validRole : null,
+    };
   } catch {
-    // Không làm gián đoạn nếu collection chưa tạo
+    return { exists: false, enabled: true, role: null };
   }
-  return null;
 }
 
 /**
@@ -309,13 +327,20 @@ async function refreshIdToken(): Promise<string> {
     const expiresInSec = parseInt(data.expires_in || '3600', 10);
     const newExpiresAt = Date.now() + expiresInSec * 1000;
 
-    // Cập nhật vai trò nếu token mới có Custom Claims mới, hoặc giữ vai trò đã xác thực
-    let updatedRole = parseJwtRole(newIdToken);
-    if (!updatedRole && conf.projectId && session.uid) {
-      updatedRole = await fetchUserRoleFromFirestore(conf.projectId, session.uid, newIdToken);
+    // Luôn ưu tiên /userRoles/{uid} làm nguồn sự thật khi làm mới token (tôn trọng enabled=false & hạ quyền tức thì)
+    let updatedRole: UserRole | null = null;
+    if (conf.projectId && session.uid) {
+      const fsRole = await fetchUserRoleFromFirestore(conf.projectId, session.uid, newIdToken);
+      if (fsRole.exists) {
+        if (!fsRole.enabled || !fsRole.role) {
+          logoutOnline();
+          throw new Error('Quyền quản trị của tài khoản này đã bị vô hiệu hóa hoặc thu hồi.');
+        }
+        updatedRole = fsRole.role;
+      }
     }
     if (!updatedRole) {
-      updatedRole = session.role;
+      updatedRole = parseJwtRole(newIdToken) || session.role;
     }
 
     session = {
@@ -401,27 +426,35 @@ export async function loginOnline(email: string, password: string): Promise<void
     })
   );
 
-  // 1. Kiểm tra vai trò từ Firebase Custom Claims
-  let role = parseJwtRole(auth.idToken);
-
-  // 2. Nếu token chưa có Custom Claims, kiểm tra cơ sở dữ liệu phân quyền /userRoles/{uid}
-  if (!role) {
-    role = await fetchUserRoleFromFirestore(conf.projectId, auth.localId, auth.idToken);
+  // 1. Luôn kiểm tra /userRoles/{uid} TRƯỚC TIÊN (nguồn sự thật ưu tiên, kể cả khi JWT còn Custom Claims cũ)
+  const fsRole = await fetchUserRoleFromFirestore(conf.projectId, auth.localId, auth.idToken);
+  if (fsRole.exists && !fsRole.enabled) {
+    throw new Error(
+      'Tài khoản này đã bị SUPER ADMIN tạm khóa hoặc thu hồi quyền quản trị (enabled = false).'
+    );
   }
 
-  // 3. Nếu chưa có Custom Claims hoặc /userRoles/{uid}, chỉ chấp nhận email quản trị chính thức ĐÃ XÁC MINH (email_verified === true)
-  const jwtPayload = parseJwtPayload(auth.idToken);
-  const isEmailVerified = jwtPayload?.email_verified === true;
-  const currentEmail = (auth.email || '').trim().toLowerCase();
-  const officialAdminEmail = (conf.adminEmail || 'truongthleloipongdrang@gmail.com').trim().toLowerCase();
-  if (!role && (currentEmail === 'truongthleloipongdrang@gmail.com' || currentEmail === officialAdminEmail)) {
-    if (isEmailVerified) {
-      role = 'admin';
-    } else {
-      throw new Error(
-        'Email quản trị chưa được xác minh (email_verified = false) và tài khoản chưa có vai trò trong /userRoles/{uid} hoặc Custom Claims. ' +
-        'Vui lòng xác minh email tài khoản hoặc tạo bản ghi /userRoles/{uid} với role: "admin" (hoặc "super_admin") trên Firebase Console.'
-      );
+  let role: UserRole | null = null;
+  if (fsRole.exists) {
+    // Khi /userRoles/{uid} tồn tại, không cho Custom Claims cũ vượt qua vai trò đã bị hạ cấp
+    role = fsRole.role;
+  } else {
+    // 2. Khi chưa có /userRoles/{uid}, kiểm tra Firebase Custom Claims hợp lệ
+    role = parseJwtRole(auth.idToken);
+
+    // 3. Tài khoản bootstrap quản trị chính thức (khớp chặt với firestore.rules, không phụ thuộc email do frontend tự khai)
+    const jwtPayload = parseJwtPayload(auth.idToken);
+    const isEmailVerified = jwtPayload?.email_verified === true;
+    const currentEmail = (auth.email || '').trim().toLowerCase();
+    if (!role && currentEmail === 'truongthleloipongdrang@gmail.com') {
+      if (isEmailVerified) {
+        role = 'super_admin';
+      } else {
+        throw new Error(
+          'Email quản trị chưa được xác minh (email_verified = false) và tài khoản chưa có vai trò trong /userRoles/{uid} hoặc Custom Claims. ' +
+          'Vui lòng xác minh email tài khoản hoặc tạo bản ghi /userRoles/{uid} với role: "admin" (hoặc "super_admin") trên Firebase Console.'
+        );
+      }
     }
   }
 

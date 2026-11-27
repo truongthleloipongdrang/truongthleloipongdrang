@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Loader2,
   BookOpen,
+  PenSquare,
 } from 'lucide-react';
 import { MemberUser } from '../types';
 import {
@@ -16,23 +17,34 @@ import {
   isFirebaseSdkReady,
 } from '../firebaseAuthStore';
 import { isTrustedPreviewEnvironment } from '../authEnvironment';
+import {
+  UserRoleRecord,
+  hasAnyEditorialPermission,
+  isSuperAdminRecord,
+  isAdminOrSuperAdminRecord,
+  summarizeGrantedScopes,
+} from '../rbacTypes';
 
 interface MemberLoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentMember?: MemberUser | null;
+  currentUserRole?: UserRoleRecord | null;
   onLoginSuccess: (member: MemberUser) => void;
   onLogout?: () => void;
   onOpenParentLookup?: () => void;
+  onOpenTeacherWorkspace?: () => void;
 }
 
 export const MemberLoginModal: React.FC<MemberLoginModalProps> = ({
   isOpen,
   onClose,
   currentMember = null,
+  currentUserRole = null,
   onLoginSuccess,
   onLogout,
   onOpenParentLookup,
+  onOpenTeacherWorkspace,
 }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -144,19 +156,59 @@ export const MemberLoginModal: React.FC<MemberLoginModalProps> = ({
                   </div>
                   <p className="text-xs text-slate-600 truncate">{currentMember.email}</p>
                   <span className="inline-block mt-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                    Tài khoản Thành viên đã xác thực Google
+                    {isSuperAdminRecord(currentUserRole)
+                      ? 'SUPER ADMIN (Toàn quyền hệ thống)'
+                      : isAdminOrSuperAdminRecord(currentUserRole)
+                      ? 'Quản trị viên nhà trường'
+                      : hasAnyEditorialPermission(currentUserRole)
+                      ? 'Giáo viên biên tập được phân quyền'
+                      : 'Tài khoản Thành viên đã xác thực Google'}
                   </span>
                 </div>
               </div>
 
-              <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1">
+              <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
                 <p className="font-bold text-slate-800 flex items-center gap-1.5">
                   <BookOpen className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>Quyền hạn thành viên:</span>
+                  <span>Quyền hạn hiện tại của tài khoản:</span>
                 </p>
                 <p>• Xem và tải các tài liệu công khai có đường dẫn thật trong Kho Tài Liệu.</p>
-                <p>• Gửi đóng góp liên kết học liệu mới vào hàng chờ quản trị viên kiểm duyệt.</p>
+                {hasAnyEditorialPermission(currentUserRole) ? (
+                  <>
+                    <p className="text-emerald-800 font-semibold">
+                      • Được phép đăng, sửa, xóa trực tiếp tại các mục đã được SUPER ADMIN phân quyền.
+                    </p>
+                    {currentUserRole && currentUserRole.role === 'editor' && (
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {summarizeGrantedScopes(currentUserRole.permissions).map((lbl) => (
+                          <span
+                            key={lbl}
+                            className="text-[10px] font-bold bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-full"
+                          >
+                            {lbl}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p>• Tài khoản thành viên mặc định chỉ có quyền đọc &amp; tải tài liệu, không có quyền đăng bài hoặc xem dữ liệu học sinh.</p>
+                )}
               </div>
+
+              {hasAnyEditorialPermission(currentUserRole) && onOpenTeacherWorkspace && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenTeacherWorkspace();
+                  }}
+                  className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold py-2.5 rounded-xl text-sm flex items-center justify-center space-x-2 shadow-sm transition-colors cursor-pointer"
+                >
+                  <PenSquare className="w-4 h-4 text-amber-300" />
+                  <span>Mở Không Gian Quản Lý Nội Dung</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -176,7 +228,7 @@ export const MemberLoginModal: React.FC<MemberLoginModalProps> = ({
                     Xác thực an toàn bằng tài khoản Google
                   </p>
                   <p>
-                    Quý thầy cô, phụ huynh và bạn đọc đăng nhập bằng Google để tải tài liệu học tập và gửi đóng góp học liệu chờ nhà trường kiểm duyệt. Phiên đăng nhập được duy trì an toàn khi tải lại trang.
+                    Quý thầy cô, phụ huynh và bạn đọc đăng nhập bằng Google để mở/tải tài liệu học tập. Nếu tài khoản Google của thầy cô đã được Ban Giám Hiệu phân quyền biên tập, nút <strong>Quản lý nội dung</strong> sẽ tự động hiển thị để đăng tin trực tiếp.
                   </p>
                 </div>
               </div>

@@ -62,7 +62,20 @@ import { EditCardModal } from './components/EditCardModal';
 import { AdminModal } from './components/AdminModal';
 import { MemberLoginModal } from './components/MemberLoginModal';
 import { AdmissionsSummaryModal } from './components/AdmissionsSummaryModal';
-import { ShieldCheck, Save, Sparkles, CheckCircle2 } from 'lucide-react';
+import { TeacherContentModal } from './components/TeacherContentModal';
+import {
+  GranularPublicBundle,
+  MainSectionScopeKey,
+  UserRoleRecord,
+  canPerformScopeAction,
+  hasAnyEditorialPermission,
+  toGalleryItemFromFirestore,
+} from './rbacTypes';
+import {
+  fetchCurrentUserRoleRecord,
+  fetchPublishedGranularContent,
+} from './rbacStore';
+import { ShieldCheck, CheckCircle2 } from 'lucide-react';
 import {
   getStoredRegistrations,
   ADMISSIONS_UPDATE_EVENT,
@@ -74,6 +87,122 @@ import {
   NEW_FEEDBACK_NOTIFICATION_EVENT,
   initFeedbackSync,
 } from './feedbackStorage';
+
+function mergeGranularBundleOntoContent(
+  base: SiteContent,
+  bundle: GranularPublicBundle | null
+): SiteContent {
+  if (!bundle) return { ...base, students: [] };
+
+  const mergeById = <T extends { id: string }>(incoming: T[], existing: T[]): T[] => {
+    const incomingIds = new Set(incoming.map((item) => item.id));
+    return [...incoming, ...existing.filter((item) => !incomingIds.has(item.id))];
+  };
+
+  const mergedNews =
+    bundle.newsItems.length > 0 ? mergeById(bundle.newsItems, base.news) : base.news;
+
+  const mergedActivities =
+    bundle.activityItems.length > 0
+      ? mergeById(bundle.activityItems, base.activities)
+      : base.activities;
+
+  const incomingPhotos = bundle.galleryItems
+    .filter((g) => g.itemType === 'photo')
+    .map(toGalleryItemFromFirestore);
+  const mergedGallery =
+    incomingPhotos.length > 0 ? mergeById(incomingPhotos, base.gallery) : base.gallery;
+
+  const incomingAlbums: NonNullable<SiteContent['galleryAlbums']> = bundle.galleryItems
+    .filter((g) => g.itemType === 'album')
+    .map((g) => ({
+      id: g.id,
+      title: g.title,
+      category: g.category,
+      description: g.caption,
+      date: g.date,
+      coverImageUrl: g.imageUrl,
+      photos: g.photos || [],
+      ...(typeof g.order === 'number' ? { order: g.order } : {}),
+      authorUid: g.authorUid,
+      authorEmail: g.authorEmail,
+    }));
+  const mergedAlbums =
+    incomingAlbums.length > 0
+      ? mergeById(incomingAlbums, base.galleryAlbums || [])
+      : base.galleryAlbums || [];
+
+  const mergedDocuments =
+    bundle.documentItems.length > 0
+      ? mergeById(bundle.documentItems, base.documents)
+      : base.documents;
+
+  let nextSchoolInfo = { ...base.schoolInfo };
+  let nextAdmissions = { ...base.admissions };
+  let nextHistoryTitle = base.historyTitle;
+  let nextHistory = base.history;
+  let nextMission = base.mission;
+  let nextVision = base.vision;
+
+  for (const sec of bundle.sectionContents) {
+    if (sec.status !== 'published' || !sec.payload) continue;
+    const p = sec.payload as Record<string, any>;
+    if (sec.sectionId === 'home') {
+      if (typeof p.slogan === 'string' && p.slogan) nextSchoolInfo.slogan = p.slogan;
+      if (typeof p.heroDescription === 'string' && p.heroDescription)
+        nextSchoolInfo.heroDescription = p.heroDescription;
+      if (typeof p.scheduleTitle === 'string' && p.scheduleTitle)
+        nextSchoolInfo.scheduleTitle = p.scheduleTitle;
+      if (typeof p.scheduleDescription === 'string' && p.scheduleDescription)
+        nextSchoolInfo.scheduleDescription = p.scheduleDescription;
+    } else if (sec.sectionId === 'about') {
+      if (typeof p.historyTitle === 'string' && p.historyTitle) nextHistoryTitle = p.historyTitle;
+      if (typeof p.history === 'string' && p.history) nextHistory = p.history;
+      if (typeof p.mission === 'string' && p.mission) nextMission = p.mission;
+      if (typeof p.vision === 'string' && p.vision) nextVision = p.vision;
+    } else if (sec.sectionId === 'staff') {
+      if (typeof p.leadershipText === 'string' && p.leadershipText)
+        nextSchoolInfo.leadershipText = p.leadershipText;
+      if (typeof p.mainCampusLeader === 'string' && p.mainCampusLeader)
+        nextSchoolInfo.mainCampusLeader = p.mainCampusLeader;
+    } else if (sec.sectionId === 'admissions') {
+      if (typeof p.headerTitle === 'string' && p.headerTitle)
+        nextAdmissions.headerTitle = p.headerTitle;
+      if (typeof p.bannerDescription === 'string' && p.bannerDescription)
+        nextAdmissions.bannerDescription = p.bannerDescription;
+      if (typeof p.hotline === 'string' && p.hotline) nextAdmissions.hotline = p.hotline;
+      if (typeof p.notes === 'string' && p.notes) nextAdmissions.notes = p.notes;
+    } else if (sec.sectionId === 'contact') {
+      if (typeof p.phone === 'string' && p.phone) nextSchoolInfo.phone = p.phone;
+      if (typeof p.email === 'string' && p.email) nextSchoolInfo.email = p.email;
+      if (typeof p.fullAddress === 'string' && p.fullAddress)
+        nextSchoolInfo.fullAddress = p.fullAddress;
+      if (typeof p.scheduleReceptionTime === 'string' && p.scheduleReceptionTime)
+        nextSchoolInfo.scheduleReceptionTime = p.scheduleReceptionTime;
+    } else if (sec.sectionId === 'other') {
+      if (typeof p.docsTeaserTitle === 'string' && p.docsTeaserTitle)
+        nextSchoolInfo.docsTeaserTitle = p.docsTeaserTitle;
+      if (typeof p.docsTeaserDescription === 'string' && p.docsTeaserDescription)
+        nextSchoolInfo.docsTeaserDescription = p.docsTeaserDescription;
+    }
+  }
+
+  return {
+    ...base,
+    schoolInfo: nextSchoolInfo,
+    admissions: nextAdmissions,
+    historyTitle: nextHistoryTitle,
+    history: nextHistory,
+    mission: nextMission,
+    vision: nextVision,
+    news: mergedNews,
+    activities: mergedActivities,
+    gallery: mergedGallery,
+    galleryAlbums: mergedAlbums,
+    documents: mergedDocuments,
+    students: [],
+  };
+}
 
 export default function App() {
   const [currentSection, setCurrentSection] = useState<NavSection>('home');
@@ -148,6 +277,30 @@ export default function App() {
   const [memberLogList, setMemberLogList] = useState<MemberUser[]>([]);
   const firebaseUserVersionRef = useRef<number>(0);
 
+  // RBAC role & Teacher direct-publishing workspace state
+  const [currentUserRole, setCurrentUserRole] = useState<UserRoleRecord | null>(null);
+  const [adminRoleRecord, setAdminRoleRecord] = useState<UserRoleRecord | null>(null);
+  const [isTeacherWorkspaceOpen, setIsTeacherWorkspaceOpen] = useState<boolean>(false);
+  const [teacherInitialSection, setTeacherInitialSection] = useState<MainSectionScopeKey | undefined>(
+    undefined
+  );
+  const [granularBundle, setGranularBundle] = useState<GranularPublicBundle | null>(null);
+
+  const refreshPublishedGranularContent = useCallback(async () => {
+    if (isTrustedPreviewEnvironment() || !isFirebaseConfigured()) return;
+    try {
+      const bundle = await fetchPublishedGranularContent();
+      setGranularBundle(bundle);
+    } catch (err) {
+      console.warn('Không tải được nội dung phân quyền từ Firestore:', err);
+    }
+  }, []);
+
+  const effectivePublicContent = React.useMemo(
+    () => mergeGranularBundleOntoContent(content, granularBundle),
+    [content, granularBundle]
+  );
+
   // Tải kết quả học tập CHỈ của con em phụ huynh đã liên kết trong /parentLinks/{uid}
   const loadLinkedParentChildren = useCallback(async (uid: string) => {
     const reqVer = firebaseUserVersionRef.current;
@@ -195,6 +348,8 @@ export default function App() {
 
       if (!fbUser) {
         setCurrentMember(null);
+        setCurrentUserRole(null);
+        setIsTeacherWorkspaceOpen(false);
         setCurrentParent(null);
         setParentChildren([]);
         setParentChildrenError(null);
@@ -209,6 +364,17 @@ export default function App() {
           member,
           ...prev.filter((m) => m.email !== member.email),
         ]);
+        // Đọc vai trò & quyền chính thức từ /userRoles/{uid} (không tự nâng quyền ở frontend)
+        void fetchCurrentUserRoleRecord(false)
+          .then((roleRec) => {
+            if (version !== firebaseUserVersionRef.current) return;
+            setCurrentUserRole(roleRec);
+          })
+          .catch(() => {
+            if (version !== firebaseUserVersionRef.current) return;
+            setCurrentUserRole(null);
+          });
+
         // Thành viên Google mặc định KHÔNG có quyền xem dữ liệu học sinh;
         // chỉ hiển thị kết quả con em nếu Quản trị viên đã chủ động liên kết UID này trong parentLinks/{uid}.
         setParentChildrenLoading(true);
@@ -237,6 +403,8 @@ export default function App() {
       } else {
         // Tài khoản Phụ huynh đăng nhập bằng Email / Mật khẩu
         setCurrentMember(null);
+        setCurrentUserRole(null);
+        setIsTeacherWorkspaceOpen(false);
         const parent = buildParentFromFirebaseUser(fbUser, true);
         setCurrentParent(parent);
         void loadLinkedParentChildren(fbUser.uid);
@@ -260,6 +428,7 @@ export default function App() {
     // Tăng phiên bản phiên làm việc để vô hiệu hóa mọi yêu cầu bất đồng bộ đang chạy (tránh dữ liệu cũ quay lại)
     authSessionVersionRef.current += 1;
     setIsAdmin(false);
+    setAdminRoleRecord(null);
     setIsPreviewMode(false);
     setPrivateStudents([]);
     setPrivateStudentsLoaded(false);
@@ -393,7 +562,7 @@ export default function App() {
     [isPreviewMode]
   );
 
-  // Nếu có phiên quản trị Firebase hợp lệ sau khi khôi phục trạng thái, tự động nạp danh sách học sinh
+  // Nếu có phiên quản trị Firebase hợp lệ sau khi khôi phục trạng thái, tự động nạp danh sách học sinh & vai trò RBAC
   useEffect(() => {
     if (isTrustedPreviewEnvironment()) return;
     if (isOnlineAuthenticated() && hasPermission('admin')) {
@@ -401,17 +570,28 @@ export default function App() {
         setIsAdmin(true);
         setIsPreviewMode(false);
       }
+      if (!adminRoleRecord) {
+        void fetchCurrentUserRoleRecord(true)
+          .then((rec) => setAdminRoleRecord(rec))
+          .catch(() => {});
+      }
       if (!privateStudentsLoaded && !privateStudentsLoading && !privateStudentsError) {
         void loadAdminPrivateStudents(false).catch(() => {});
       }
     }
   }, [
     isAdmin,
+    adminRoleRecord,
     privateStudentsLoaded,
     privateStudentsLoading,
     privateStudentsError,
     loadAdminPrivateStudents,
   ]);
+
+  // Nạp các mục nội dung đã xuất bản trực tiếp theo phân quyền (newsItems, activityItems, galleryItems, documentItems, sectionContents)
+  useEffect(() => {
+    void refreshPublishedGranularContent();
+  }, [refreshPublishedGranularContent]);
 
   // Initialize admissions & feedback real-time sync with server & multi-tab
   // BẢO VỆ CHẾ ĐỘ XEM TRƯỚC: Môi trường xem trước AI Studio hoàn toàn không gọi sync hay polling với Firestore production
@@ -1265,6 +1445,8 @@ export default function App() {
       // Vẫn xóa sạch trạng thái trên giao diện
     }
     setCurrentMember(null);
+    setCurrentUserRole(null);
+    setIsTeacherWorkspaceOpen(false);
     setCurrentParent(null);
     setParentChildren([]);
     setParentChildrenError(null);
@@ -1361,7 +1543,7 @@ export default function App() {
       <Navbar
         currentSection={currentSection}
         onNavigate={handleNavigate}
-        schoolInfo={content.schoolInfo}
+        schoolInfo={effectivePublicContent.schoolInfo}
         isAdmin={isAdmin}
         showAdminButton={showAdminButton}
         onOpenAdmin={() => setIsAdminModalOpen(true)}
@@ -1384,12 +1566,17 @@ export default function App() {
           void handleFirebaseUserLogout();
         }}
         onOpenAdmissionsSummary={() => setIsAdmissionsSummaryOpen(true)}
+        currentUserRole={currentUserRole}
+        onOpenTeacherWorkspace={() => {
+          setTeacherInitialSection(undefined);
+          setIsTeacherWorkspaceOpen(true);
+        }}
       />
 
       {/* Hero Banner (Always on Home) */}
       {currentSection === 'home' && (
         <HeroBanner
-          schoolInfo={content.schoolInfo}
+          schoolInfo={effectivePublicContent.schoolInfo}
           isAdmin={isAdmin}
           onEditCard={handleOpenEditCard}
           onNavigate={handleNavigate}
@@ -1400,7 +1587,7 @@ export default function App() {
       <main className="flex-1">
         {currentSection === 'home' && (
           <HomeSection
-            content={content}
+            content={effectivePublicContent}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
             onNavigate={handleNavigate}
@@ -1415,7 +1602,7 @@ export default function App() {
 
         {currentSection === 'about' && (
           <AboutSection
-            content={content}
+            content={effectivePublicContent}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
           />
@@ -1423,7 +1610,7 @@ export default function App() {
 
         {currentSection === 'staff' && (
           <StaffSection
-            content={content}
+            content={effectivePublicContent}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
           />
@@ -1431,7 +1618,7 @@ export default function App() {
 
         {currentSection === 'news' && (
           <NewsSection
-            newsList={content.news}
+            newsList={effectivePublicContent.news}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
             selectedNews={selectedNews}
@@ -1444,7 +1631,7 @@ export default function App() {
 
         {currentSection === 'activities' && (
           <ActivitiesSection
-            activities={content.activities}
+            activities={effectivePublicContent.activities}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
             onToggleHighlightActivity={handleToggleHighlightActivity}
@@ -1457,7 +1644,7 @@ export default function App() {
 
         {currentSection === 'admissions' && (
           <AdmissionsSection
-            admissions={content.admissions}
+            admissions={effectivePublicContent.admissions}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
           />
@@ -1506,19 +1693,29 @@ export default function App() {
 
         {currentSection === 'documents' && (
           <DocumentsSection
-            documents={content.documents}
+            documents={effectivePublicContent.documents}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
             currentMember={currentMember}
             onOpenMemberLogin={() => setIsMemberModalOpen(true)}
             onIncrementDownload={handleIncrementDownload}
+            canPublishDocuments={canPerformScopeAction(currentUserRole, 'documents', 'CREATE')}
+            onOpenDocumentPublisher={() => {
+              if (hasAnyEditorialPermission(currentUserRole) && currentUserRole) {
+                setTeacherInitialSection('documents');
+                setIsTeacherWorkspaceOpen(true);
+              } else if (isAdmin) {
+                setAdminInitialTab('documents');
+                setIsAdminModalOpen(true);
+              }
+            }}
           />
         )}
 
         {currentSection === 'gallery' && (
           <GallerySection
-            gallery={content.gallery}
-            galleryAlbums={content.galleryAlbums || []}
+            gallery={effectivePublicContent.gallery}
+            galleryAlbums={effectivePublicContent.galleryAlbums || []}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
             onOpenGalleryManager={() => {
@@ -1530,7 +1727,7 @@ export default function App() {
 
         {currentSection === 'contact' && (
           <ContactSection
-            schoolInfo={content.schoolInfo}
+            schoolInfo={effectivePublicContent.schoolInfo}
             isAdmin={isAdmin}
             onEditCard={handleOpenEditCard}
           />
@@ -1539,7 +1736,7 @@ export default function App() {
 
       {/* Footer */}
       <Footer
-        schoolInfo={content.schoolInfo}
+        schoolInfo={effectivePublicContent.schoolInfo}
         onNavigate={handleNavigate}
         onOpenAdmin={() => setIsAdminModalOpen(true)}
         isAdmin={isAdmin}
@@ -1565,6 +1762,11 @@ export default function App() {
         onLoginSuccess={(isPreview = false) => {
           setIsAdmin(true);
           setIsPreviewMode(isPreview);
+          if (!isPreview) {
+            void fetchCurrentUserRoleRecord(true)
+              .then((rec) => setAdminRoleRecord(rec))
+              .catch(() => {});
+          }
         }}
         onLogout={handleAdminLogout}
         content={content}
@@ -1590,22 +1792,51 @@ export default function App() {
         }}
         memberLogList={memberLogList}
         initialTab={adminInitialTab}
+        currentRoleRecord={adminRoleRecord || currentUserRole}
       />
 
       {/* Member Login Modal */}
-      <MemberLoginModal
-        isOpen={isMemberModalOpen}
-        onClose={() => setIsMemberModalOpen(false)}
-        currentMember={currentMember}
-        onLoginSuccess={handleMemberLoginSuccess}
-        onLogout={() => {
-          void handleFirebaseUserLogout();
-        }}
-        onOpenParentLookup={() => {
-          setIsMemberModalOpen(false);
-          handleNavigate('student-lookup');
-        }}
-      />
+      {(() => {
+        type MemberLoginModalCompatProps = React.ComponentProps<typeof MemberLoginModal> & {
+          currentUserRole?: UserRoleRecord | null;
+          onOpenTeacherWorkspace?: () => void;
+        };
+        const MemberLoginModalCompat =
+          MemberLoginModal as React.ComponentType<MemberLoginModalCompatProps>;
+        return (
+          <MemberLoginModalCompat
+            isOpen={isMemberModalOpen}
+            onClose={() => setIsMemberModalOpen(false)}
+            currentMember={currentMember}
+            currentUserRole={currentUserRole}
+            onLoginSuccess={handleMemberLoginSuccess}
+            onLogout={() => {
+              void handleFirebaseUserLogout();
+            }}
+            onOpenParentLookup={() => {
+              setIsMemberModalOpen(false);
+              handleNavigate('student-lookup');
+            }}
+            onOpenTeacherWorkspace={() => {
+              setTeacherInitialSection(undefined);
+              setIsTeacherWorkspaceOpen(true);
+            }}
+          />
+        );
+      })()}
+
+      {/* Teacher Direct-Publishing Content Workspace (only mounted when user has active RBAC permissions) */}
+      {currentUserRole && hasAnyEditorialPermission(currentUserRole) && (
+        <TeacherContentModal
+          isOpen={isTeacherWorkspaceOpen}
+          onClose={() => setIsTeacherWorkspaceOpen(false)}
+          roleRecord={currentUserRole}
+          currentMember={currentMember}
+          siteContent={effectivePublicContent}
+          initialSection={teacherInitialSection}
+          onContentMutated={refreshPublishedGranularContent}
+        />
+      )}
 
       {/* Admissions Consolidated Summary Modal */}
       <AdmissionsSummaryModal

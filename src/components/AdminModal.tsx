@@ -15,12 +15,12 @@ import {
   fetchParentLinksForAdmin,
   saveParentLinkForAdmin,
   deleteParentLinkForAdmin,
-  fetchDocumentSubmissionsForAdmin,
-  updateDocumentSubmissionStatusForAdmin,
-  deleteDocumentSubmissionForAdmin,
   fetchMemberProfilesForAdmin,
 } from '../onlineStore';
 import { toSafeStudentResultDocId, validateDocumentUrl } from '../urlValidation';
+import { UserRoleRecord, isSuperAdminRecord } from '../rbacTypes';
+import { AdminAccountsPermissionsManager } from './AdminAccountsPermissionsManager';
+import { AdminEditorialLogsPanel } from './AdminEditorialLogsPanel';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -66,7 +66,6 @@ import {
   DocumentItem,
   MemberUser,
   ParentLinkRecord,
-  DocumentSubmission,
   AdmissionRegistration,
   FeedbackSubmission,
   AdminTabKey,
@@ -136,6 +135,7 @@ interface AdminModalProps {
   onResetContent: () => void;
   memberLogList: MemberUser[];
   initialTab?: AdminTabKey;
+  currentRoleRecord?: UserRoleRecord | null;
 }
 
 export const AdminModal: React.FC<AdminModalProps> = ({
@@ -156,6 +156,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onResetContent,
   memberLogList,
   initialTab,
+  currentRoleRecord = null,
 }) => {
   // Environment-based login authorization
   const canUsePreviewAuth = isTrustedPreviewEnvironment();
@@ -178,11 +179,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       setImportPreview(null);
       setImportError(null);
       setParentLinks([]);
-      setDocSubmissions([]);
       setRemoteMembers([]);
       setMigrationReportMsg(null);
       setParentLinkMsg(null);
-      setDocSubMsg(null);
       setDraft((prev) => ({ ...prev, students: [] }));
     }
   }, [isAdmin]);
@@ -389,20 +388,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     text: string;
   } | null>(null);
 
-  // Document Submissions Moderation states (Admin only)
-  const [docSubmissions, setDocSubmissions] = useState<DocumentSubmission[]>([]);
-  const [loadingDocSubmissions, setLoadingDocSubmissions] = useState(false);
-  const [processingSubId, setProcessingSubId] = useState<string | null>(null);
-  const [docSubMsg, setDocSubMsg] = useState<{
-    type: 'success' | 'error';
-    text: string;
-  } | null>(null);
-
   // Remote Member Profiles from Firestore (Admin only)
   const [remoteMembers, setRemoteMembers] = useState<MemberUser[]>([]);
   const [loadingRemoteMembers, setLoadingRemoteMembers] = useState(false);
 
-  // Tự động tải dữ liệu liên kết phụ huynh / học liệu chờ duyệt / thành viên khi mở đúng tab
+  // Chỉ SUPER ADMIN mới thấy & sử dụng tab Quản lý Tài khoản & Phân quyền + Nhật ký Biên tập
+  const isSuperAdmin =
+    isSuperAdminRecord(currentRoleRecord) ||
+    getAdminRole() === 'super_admin' ||
+    isPreviewSession;
+
+  // Tự động tải dữ liệu liên kết phụ huynh / thành viên khi mở đúng tab
   useEffect(() => {
     if (!isOpen || !isAdmin || isPreviewSession || !isOnlineAuthenticated()) return;
 
@@ -412,12 +408,6 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         .then((list) => setParentLinks(list))
         .catch(() => {})
         .finally(() => setLoadingParentLinks(false));
-    } else if (activeTab === 'documents') {
-      setLoadingDocSubmissions(true);
-      fetchDocumentSubmissionsForAdmin()
-        .then((list) => setDocSubmissions(list))
-        .catch(() => {})
-        .finally(() => setLoadingDocSubmissions(false));
     } else if (activeTab === 'members') {
       setLoadingRemoteMembers(true);
       fetchMemberProfilesForAdmin()
@@ -564,106 +554,6 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         type: 'error',
         text: err?.message || 'Không thể hủy liên kết phụ huynh.',
       });
-    }
-  };
-
-  const handleApproveSubmission = async (sub: DocumentSubmission) => {
-    if (processingSubId) return;
-    const urlCheck = validateDocumentUrl(sub.downloadUrl);
-    if (!urlCheck.valid || !urlCheck.normalizedUrl) {
-      setDocSubMsg({
-        type: 'error',
-        text: `Không thể duyệt "${sub.title}" vì liên kết không hợp lệ: ${urlCheck.error}`,
-      });
-      return;
-    }
-
-    setProcessingSubId(sub.id);
-    setDocSubMsg(null);
-    try {
-      const newDoc: DocumentItem = {
-        id: `doc-${Date.now()}`,
-        title: sub.title,
-        category: sub.category,
-        categoryLabel: sub.categoryLabel,
-        fileSize: sub.fileSize || 'Liên kết trực tuyến',
-        fileType: sub.fileType || 'Link trực tuyến',
-        uploadDate: new Date().toLocaleDateString('vi-VN'),
-        uploaderName: sub.submittedByName,
-        uploaderEmail: sub.submittedByEmail,
-        downloadCount: 0,
-        description: sub.description,
-        downloadUrl: urlCheck.normalizedUrl,
-      };
-
-      const nextDraft: SiteContent = {
-        ...draft,
-        documents: [newDoc, ...draft.documents],
-      };
-
-      await saveOnlineContent(nextDraft);
-      await updateDocumentSubmissionStatusForAdmin(sub.id, 'approved', 'Đã duyệt và xuất bản vào Kho Tài Liệu');
-
-      setDraft(nextDraft);
-      onSaveContent(nextDraft, true);
-      setDocSubmissions((prev) =>
-        prev.map((item) => (item.id === sub.id ? { ...item, status: 'approved' } : item))
-      );
-      setDocSubMsg({
-        type: 'success',
-        text: `✅ Đã duyệt và xuất bản học liệu "${sub.title}" lên Kho Tài Liệu công khai!`,
-      });
-    } catch (err: any) {
-      setDocSubMsg({
-        type: 'error',
-        text: err?.message || 'Không thể duyệt và xuất bản học liệu.',
-      });
-    } finally {
-      setProcessingSubId(null);
-    }
-  };
-
-  const handleRejectSubmission = async (sub: DocumentSubmission) => {
-    if (processingSubId) return;
-    setProcessingSubId(sub.id);
-    setDocSubMsg(null);
-    try {
-      await updateDocumentSubmissionStatusForAdmin(
-        sub.id,
-        'rejected',
-        'Liên kết chưa phù hợp hoặc cần bổ sung mô tả rõ hơn'
-      );
-      setDocSubmissions((prev) =>
-        prev.map((item) => (item.id === sub.id ? { ...item, status: 'rejected' } : item))
-      );
-      setDocSubMsg({
-        type: 'success',
-        text: `Đã từ chối đề xuất học liệu "${sub.title}".`,
-      });
-    } catch (err: any) {
-      setDocSubMsg({
-        type: 'error',
-        text: err?.message || 'Không thể cập nhật trạng thái từ chối.',
-      });
-    } finally {
-      setProcessingSubId(null);
-    }
-  };
-
-  const handleDeleteSubmission = async (subId: string) => {
-    if (processingSubId) return;
-    setProcessingSubId(subId);
-    setDocSubMsg(null);
-    try {
-      await deleteDocumentSubmissionForAdmin(subId);
-      setDocSubmissions((prev) => prev.filter((item) => item.id !== subId));
-    } catch (err: any) {
-      setDocSubMsg({
-        type: 'error',
-        text: err?.message || 'Không thể xóa đề xuất học liệu.',
-      });
-    } finally {
-      setProcessingSubId(null);
     }
   };
 
@@ -1591,6 +1481,30 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               >
                 👥 Nhật Ký Thành Viên ({memberLogList.length})
               </button>
+              {isSuperAdmin && (
+                <>
+                  <button
+                    onClick={() => setActiveTab('accounts_permissions')}
+                    className={`text-left px-3 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                      activeTab === 'accounts_permissions'
+                        ? 'bg-purple-700 text-white'
+                        : 'text-purple-900 bg-purple-50 hover:bg-purple-100'
+                    }`}
+                  >
+                    🔐 Tài Khoản &amp; Phân Quyền
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('editorial_logs')}
+                    className={`text-left px-3 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                      activeTab === 'editorial_logs'
+                        ? 'bg-purple-700 text-white'
+                        : 'text-purple-900 bg-purple-50 hover:bg-purple-100'
+                    }`}
+                  >
+                    📜 Nhật Ký Biên Tập
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => setActiveTab('password')}
                 className={`text-left px-3 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
@@ -2891,149 +2805,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     </button>
                   </div>
 
-                  {/* Pending Member Document Submissions Moderation Queue */}
-                  {!isPreviewSession && (
-                    <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-4 space-y-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/80 pb-2.5">
-                        <div>
-                          <h4 className="text-sm font-black text-amber-950 flex items-center gap-1.5">
-                            <Clock className="w-4 h-4 text-amber-700" />
-                            <span>
-                              Học Liệu Thành Viên Gửi Chờ Kiểm Duyệt ({docSubmissions.filter((s) => s.status === 'pending').length} chờ duyệt / {docSubmissions.length} tổng)
-                            </span>
-                          </h4>
-                          <p className="text-[11px] text-amber-900/90 mt-0.5">
-                            Thành viên gửi link học liệu sẽ vào hàng chờ tại đây. Chỉ Quản trị viên mới có quyền duyệt để xuất bản công khai.
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={loadingDocSubmissions}
-                          onClick={() => {
-                            setLoadingDocSubmissions(true);
-                            fetchDocumentSubmissionsForAdmin()
-                              .then((list) => setDocSubmissions(list))
-                              .catch((err: any) =>
-                                setDocSubMsg({
-                                  type: 'error',
-                                  text: err?.message || 'Không tải được hàng chờ học liệu.',
-                                })
-                              )
-                              .finally(() => setLoadingDocSubmissions(false));
-                          }}
-                          className="inline-flex items-center bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold px-2.5 py-1.5 rounded-lg text-xs cursor-pointer self-start sm:self-auto"
-                        >
-                          <RefreshCcw className={`w-3.5 h-3.5 mr-1 ${loadingDocSubmissions ? 'animate-spin' : ''}`} />
-                          <span>Tải Lại Hàng Chờ</span>
-                        </button>
-                      </div>
-
-                      {docSubMsg && (
-                        <div
-                          className={`text-xs p-2.5 rounded-xl border font-semibold ${
-                            docSubMsg.type === 'success'
-                              ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                              : 'bg-red-50 border-red-200 text-red-800'
-                          }`}
-                        >
-                          {docSubMsg.text}
-                        </div>
-                      )}
-
-                      {docSubmissions.length === 0 ? (
-                        <p className="text-xs text-amber-900/80 italic">
-                          Chưa có đề xuất học liệu nào từ thành viên.
-                        </p>
-                      ) : (
-                        <div className="space-y-2.5">
-                          {docSubmissions.map((sub) => {
-                            const urlInfo = validateDocumentUrl(sub.downloadUrl);
-                            return (
-                              <div
-                                key={sub.id}
-                                className="bg-white border border-amber-200 rounded-xl p-3 space-y-2 text-xs"
-                              >
-                                <div className="flex flex-wrap items-start justify-between gap-2">
-                                  <div>
-                                    <span className="font-extrabold text-slate-900">{sub.title}</span>
-                                    <div className="text-[11px] text-slate-500 mt-0.5">
-                                      Gửi bởi: <strong>{sub.submittedByName}</strong> ({sub.submittedByEmail}) • {sub.categoryLabel} • {sub.fileType}
-                                    </div>
-                                  </div>
-                                  <span
-                                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                      sub.status === 'approved'
-                                        ? 'bg-emerald-100 text-emerald-800'
-                                        : sub.status === 'rejected'
-                                        ? 'bg-red-100 text-red-800'
-                                        : 'bg-amber-100 text-amber-900'
-                                    }`}
-                                  >
-                                    {sub.status === 'approved'
-                                      ? 'Đã duyệt'
-                                      : sub.status === 'rejected'
-                                      ? 'Đã từ chối'
-                                      : 'Chờ duyệt'}
-                                  </span>
-                                </div>
-
-                                <p className="text-slate-700">{sub.description}</p>
-
-                                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
-                                  {urlInfo.valid && urlInfo.normalizedUrl ? (
-                                    <a
-                                      href={urlInfo.normalizedUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-emerald-700 hover:underline font-mono text-[11px] truncate max-w-md"
-                                    >
-                                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                                      <span className="truncate">{urlInfo.normalizedUrl}</span>
-                                    </a>
-                                  ) : (
-                                    <span className="text-red-600 font-bold text-[11px]">
-                                      Liên kết không hợp lệ ({urlInfo.error})
-                                    </span>
-                                  )}
-
-                                  <div className="flex items-center gap-1.5">
-                                    {sub.status === 'pending' && (
-                                      <>
-                                        <button
-                                          type="button"
-                                          disabled={processingSubId === sub.id || !urlInfo.valid}
-                                          onClick={() => handleApproveSubmission(sub)}
-                                          className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-2.5 py-1 rounded-lg text-[11px] disabled:opacity-50 cursor-pointer"
-                                        >
-                                          Duyệt &amp; Xuất Bản
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={processingSubId === sub.id}
-                                          onClick={() => handleRejectSubmission(sub)}
-                                          className="bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold px-2.5 py-1 rounded-lg text-[11px] disabled:opacity-50 cursor-pointer"
-                                        >
-                                          Từ Chối
-                                        </button>
-                                      </>
-                                    )}
-                                    <button
-                                      type="button"
-                                      disabled={processingSubId === sub.id}
-                                      onClick={() => handleDeleteSubmission(sub.id)}
-                                      className="text-red-600 hover:bg-red-50 font-bold px-2 py-1 rounded-lg text-[11px] cursor-pointer"
-                                    >
-                                      Xóa
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {/* Cơ chế đăng trực tiếp — đã loại bỏ hoàn toàn hàng chờ kiểm duyệt */}
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900">
+                    <strong>Đăng tài liệu trực tiếp theo phân quyền:</strong> Giáo viên được SUPER ADMIN cấp quyền mục <strong>Kho tài liệu</strong> có thể đăng, sửa hoặc xóa tài liệu trực tiếp (không cần hàng chờ duyệt). Toàn bộ thao tác được ghi tự động trong mục <strong>Nhật Ký Biên Tập</strong>.
+                  </div>
 
                   <div className="space-y-3.5">
                     {draft.documents.map((doc, idx) => (
@@ -3306,6 +3081,27 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </div>
                 );
               })()}
+
+              {/* TAB 6B: ACCOUNTS & RBAC PERMISSIONS (SUPER ADMIN ONLY) */}
+              {activeTab === 'accounts_permissions' && (
+                <AdminAccountsPermissionsManager
+                  isSuperAdmin={isSuperAdmin}
+                  isPreviewMode={isPreviewSession}
+                  actorEmail={
+                    currentRoleRecord?.email ||
+                    getOnlineSession()?.email ||
+                    'truongthleloipongdrang@gmail.com'
+                  }
+                />
+              )}
+
+              {/* TAB 6C: EDITORIAL AUDIT LOGS (SUPER ADMIN ONLY) */}
+              {activeTab === 'editorial_logs' && (
+                <AdminEditorialLogsPanel
+                  isSuperAdmin={isSuperAdmin}
+                  isPreviewMode={isPreviewSession}
+                />
+              )}
 
               {/* TAB 7: CHANGE PASSWORD */}
               {activeTab === 'password' && (

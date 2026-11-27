@@ -106,6 +106,37 @@ function ensureFirebaseSdk(): { app: FirebaseApp; auth: Auth; db: Firestore } {
   };
 }
 
+export function getFirebaseAuthAndDb(): { app: FirebaseApp; auth: Auth; db: Firestore } {
+  return ensureFirebaseSdk();
+}
+
+export async function getFirebaseCurrentUserIdToken(forceRefresh = false): Promise<{
+  idToken: string;
+  uid: string;
+  email: string;
+  emailVerified: boolean;
+  displayName: string;
+  photoURL: string;
+} | null> {
+  if (!isFirebaseSdkReady()) return null;
+  try {
+    const { auth } = ensureFirebaseSdk();
+    const user = auth.currentUser;
+    if (!user || !user.email) return null;
+    const idToken = await user.getIdToken(forceRefresh);
+    return {
+      idToken,
+      uid: user.uid,
+      email: user.email,
+      emailVerified: Boolean(user.emailVerified),
+      displayName: user.displayName || user.email.split('@')[0] || 'Thành viên',
+      photoURL: user.photoURL || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function mapFirebaseAuthError(error: unknown): string {
   const code = typeof error === 'object' && error !== null && 'code' in error
     ? String((error as { code?: string }).code || '')
